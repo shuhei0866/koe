@@ -4,10 +4,17 @@ version = "0.1.0"
 edition = "2021"
 description = "Ubuntu voice input system powered by Whisper + AI post-processing"
 
+[features]
+default = ["gui"]
+gui = ["dep:gtk4", "dep:libadwaita", "dep:ksni", "dep:async-channel"]
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
 
 # Audio capture
 cpal = "0.15"
@@ -16,7 +23,7 @@ cpal = "0.15"
 whisper-rs = "0.12"
 
 # HTTP client (for OpenAI API, Claude API, Ollama) - use rustls to avoid libssl-dev
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "blocking"] }
 
 # Global hotkey
 rdev = "0.5"
@@ -50,3 +57,9 @@ thiserror = "2"
 dirs = "6"
 shellexpand = "3"
 hound = "3.5"
+
+# GUI (optional, behind "gui" feature)
+gtk4 = { version = "0.9", features = ["v4_6"], optional = true }
+libadwaita = { version = "0.7", features = ["v1_4", "gtk_v4_6"], optional = true }
+ksni = { version = "0.3", optional = true }
+async-channel = { version = "2", optional = true }
