@@ -5,8 +5,10 @@ edition = "2021"
 description = "Ubuntu voice input system powered by Whisper + AI post-processing"
 
 [features]
-default = ["gui"]
+default = ["gui", "vulkan"]
 gui = ["dep:gtk4", "dep:libadwaita", "dep:ksni", "dep:async-channel"]
+cuda = ["whisper-rs/cuda"]
+vulkan = ["whisper-rs/vulkan"]
 
 [dependencies]
 # Async runtime
@@ -20,7 +22,7 @@ clap = { version = "4", features = ["derive"] }
 cpal = "0.15"
 
 # Speech recognition - local
-whisper-rs = "0.12"
+whisper-rs = "0.15"
 
 # HTTP client (for OpenAI API, Claude API, Ollama) - use rustls to avoid libssl-dev
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "blocking"] }
