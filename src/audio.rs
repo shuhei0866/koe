@@ -2,6 +2,17 @@ use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
 
+/// List available input device names.
+pub fn list_input_devices() -> Result<Vec<String>> {
+    let host = cpal::default_host();
+    let devices: Vec<String> = host
+        .input_devices()
+        .context("listing input devices")?
+        .filter_map(|d| d.name().ok())
+        .collect();
+    Ok(devices)
+}
+
 /// Raw audio data in the format expected by whisper: 16kHz mono f32 PCM.
 #[derive(Debug, Clone)]
 pub struct AudioData {
