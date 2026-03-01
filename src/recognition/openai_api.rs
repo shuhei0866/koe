@@ -15,12 +15,7 @@ pub struct OpenAiRecognizer {
 
 impl OpenAiRecognizer {
     pub fn new(config: &OpenAiApiConfig) -> Result<Self> {
-        let api_key = std::env::var(&config.api_key_env).with_context(|| {
-            format!(
-                "Environment variable {} not set for OpenAI API key",
-                config.api_key_env
-            )
-        })?;
+        let api_key = crate::config::resolve_api_key(&config.api_key_env)?;
 
         Ok(Self {
             api_key,

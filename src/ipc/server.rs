@@ -1,0 +1,101 @@
+use anyhow::{Context, Result};
+use std::sync::mpsc;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::UnixListener;
+
+use super::{IpcRequest, IpcResponse};
+
+/// Start the IPC server on a Unix Domain Socket.
+/// Returns a channel receiver for incoming requests.
+pub async fn start() -> Result<mpsc::Receiver<IpcRequest>> {
+    let sock_path = super::socket_path();
+
+    // Remove stale socket file if it exists
+    if sock_path.exists() {
+        std::fs::remove_file(&sock_path)
+            .with_context(|| format!("removing stale socket {}", sock_path.display()))?;
+    }
+
+    let listener = UnixListener::bind(&sock_path)
+        .with_context(|| format!("binding {}", sock_path.display()))?;
+
+    tracing::info!("IPC server listening on {}", sock_path.display());
+
+    let (tx, rx) = mpsc::channel();
+
+    tokio::spawn(async move {
+        loop {
+            match listener.accept().await {
+                Ok((stream, _)) => {
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_connection(stream, tx).await {
+                            tracing::error!("IPC connection error: {}", e);
+                        }
+                    });
+                }
+                Err(e) => {
+                    tracing::error!("IPC accept error: {}", e);
+                }
+            }
+        }
+    });
+
+    Ok(rx)
+}
+
+async fn handle_connection(
+    stream: tokio::net::UnixStream,
+    tx: mpsc::Sender<IpcRequest>,
+) -> Result<()> {
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(reader);
+    let mut line = String::new();
+
+    while reader.read_line(&mut line).await? > 0 {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            line.clear();
+            continue;
+        }
+
+        match serde_json::from_str::<IpcRequest>(trimmed) {
+            Ok(request) => {
+                tracing::debug!("IPC request: {:?}", request);
+                let response = match &request {
+                    IpcRequest::GetStatus => {
+                        let _ = tx.send(IpcRequest::GetStatus);
+                        IpcResponse::Status {
+                            state: "idle".to_string(),
+                            is_recording: false,
+                        }
+                    }
+                    IpcRequest::ReloadConfig => {
+                        let _ = tx.send(IpcRequest::ReloadConfig);
+                        IpcResponse::Ok
+                    }
+                    IpcRequest::Shutdown => {
+                        let _ = tx.send(IpcRequest::Shutdown);
+                        IpcResponse::Ok
+                    }
+                };
+
+                let mut resp_json = serde_json::to_string(&response)?;
+                resp_json.push('\n');
+                writer.write_all(resp_json.as_bytes()).await?;
+            }
+            Err(e) => {
+                let response = IpcResponse::Error {
+                    message: format!("invalid request: {}", e),
+                };
+                let mut resp_json = serde_json::to_string(&response)?;
+                resp_json.push('\n');
+                writer.write_all(resp_json.as_bytes()).await?;
+            }
+        }
+
+        line.clear();
+    }
+
+    Ok(())
+}
