@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
     pub recognition: RecognitionConfig,
     pub ai: AiConfig,
@@ -13,28 +13,28 @@ pub struct Config {
     pub dictionaries: DictionaryConfig,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RecognitionConfig {
     pub engine: RecognitionEngine,
     pub whisper_local: Option<WhisperLocalConfig>,
     pub openai_api: Option<OpenAiApiConfig>,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum RecognitionEngine {
     WhisperLocal,
     OpenaiApi,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct WhisperLocalConfig {
     pub model_path: String,
     #[serde(default = "default_language")]
     pub language: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct OpenAiApiConfig {
     #[serde(default = "default_openai_key_env")]
     pub api_key_env: String,
@@ -42,21 +42,21 @@ pub struct OpenAiApiConfig {
     pub language: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AiConfig {
     pub engine: AiEngine,
     pub claude: Option<ClaudeConfig>,
     pub ollama: Option<OllamaConfig>,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum AiEngine {
     Claude,
     Ollama,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ClaudeConfig {
     #[serde(default = "default_anthropic_key_env")]
     pub api_key_env: String,
@@ -64,7 +64,7 @@ pub struct ClaudeConfig {
     pub model: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct OllamaConfig {
     #[serde(default = "default_ollama_host")]
     pub host: String,
@@ -72,7 +72,7 @@ pub struct OllamaConfig {
     pub model: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HotkeyConfig {
     #[serde(default = "default_hotkey_mode")]
     pub mode: HotkeyMode,
@@ -80,14 +80,14 @@ pub struct HotkeyConfig {
     pub key: String,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum HotkeyMode {
     PushToTalk,
     Toggle,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct InputConfig {
     #[serde(default = "default_input_method")]
     pub method: String,
@@ -101,7 +101,7 @@ impl Default for InputConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DictionaryConfig {
     #[serde(default)]
     pub paths: Vec<String>,
@@ -148,15 +148,16 @@ fn expand_path(p: &str) -> PathBuf {
 }
 
 impl Config {
+    /// Return the canonical config path (~/.config/koe/config.toml).
+    pub fn config_path() -> PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(|| expand_path("~/.config"))
+            .join("koe/config.toml")
+    }
+
     /// Load config from a TOML file, trying several default locations.
     pub fn load() -> Result<Self> {
-        let candidates = vec![
-            PathBuf::from("config.toml"),
-            dirs::config_dir()
-                .map(|d| d.join("koe/config.toml"))
-                .unwrap_or_default(),
-            expand_path("~/.config/koe/config.toml"),
-        ];
+        let candidates = vec![PathBuf::from("config.toml"), Self::config_path()];
 
         for path in &candidates {
             if path.exists() {
@@ -164,10 +165,7 @@ impl Config {
             }
         }
 
-        anyhow::bail!(
-            "No config.toml found. Searched: {:?}",
-            candidates
-        )
+        anyhow::bail!("No config.toml found. Searched: {:?}", candidates)
     }
 
     pub fn load_from(path: &Path) -> Result<Self> {
@@ -176,6 +174,18 @@ impl Config {
         let config: Config =
             toml::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
         Ok(config)
+    }
+
+    /// Save config to the given path as TOML.
+    pub fn save(&self, path: &Path) -> Result<()> {
+        let content = toml::to_string_pretty(self).context("serializing config")?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating directory {}", parent.display()))?;
+        }
+        std::fs::write(path, content)
+            .with_context(|| format!("writing config to {}", path.display()))?;
+        Ok(())
     }
 
     /// Resolve the whisper model path (expand ~).
