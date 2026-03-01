@@ -28,10 +28,11 @@ impl std::fmt::Display for AppState {
 pub async fn run_daemon(config: config::Config) -> Result<()> {
     // Load dictionaries
     let dict_paths = config.dictionary_paths();
-    let dictionary = dictionary::Dictionary::load(&dict_paths).context("loading dictionaries")?;
+    let mut dictionary =
+        dictionary::Dictionary::load(&dict_paths).context("loading dictionaries")?;
 
     // Initialize speech recognizer
-    let recognizer =
+    let mut recognizer =
         recognition::create_recognizer(&config.recognition).context("creating recognizer")?;
     tracing::info!(
         "Speech recognizer ready: {:?}",
@@ -39,7 +40,7 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
     );
 
     // Initialize AI processor
-    let processor = ai::create_processor(&config.ai).context("creating AI processor")?;
+    let mut processor = ai::create_processor(&config.ai).context("creating AI processor")?;
     tracing::info!("AI processor ready: {:?}", config.ai.engine);
 
     // Initialize audio recorder
@@ -73,6 +74,61 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
             }
             Ok(ipc::IpcRequest::ReloadConfig) => {
                 tracing::info!("IPC: ReloadConfig request received");
+                if state != AppState::Idle {
+                    tracing::warn!(
+                        "Skipping config reload: state is {} (must be Idle)",
+                        state
+                    );
+                } else {
+                    match config::Config::load() {
+                        Ok(new_config) => {
+                            // Reload dictionary
+                            let dict_paths = new_config.dictionary_paths();
+                            match dictionary::Dictionary::load(&dict_paths) {
+                                Ok(new_dict) => {
+                                    dictionary = new_dict;
+                                    tracing::info!("Dictionary reloaded");
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to reload dictionary: {}", e);
+                                }
+                            }
+
+                            // Reload recognizer
+                            match recognition::create_recognizer(&new_config.recognition) {
+                                Ok(new_recognizer) => {
+                                    recognizer = new_recognizer;
+                                    tracing::info!(
+                                        "Recognizer reloaded: {:?}",
+                                        new_config.recognition.engine
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to reload recognizer: {}", e);
+                                }
+                            }
+
+                            // Reload AI processor
+                            match ai::create_processor(&new_config.ai) {
+                                Ok(new_processor) => {
+                                    processor = new_processor;
+                                    tracing::info!(
+                                        "AI processor reloaded: {:?}",
+                                        new_config.ai.engine
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to reload AI processor: {}", e);
+                                }
+                            }
+
+                            tracing::info!("Config reloaded successfully");
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to load config: {}", e);
+                        }
+                    }
+                }
             }
             Ok(ipc::IpcRequest::Shutdown) => {
                 tracing::info!("IPC: Shutdown request received");
