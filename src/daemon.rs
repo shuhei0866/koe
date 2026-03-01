@@ -195,17 +195,17 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
                                             state = AppState::Typing;
 
                                             if let Err(e) =
-                                                input::type_text(&processed_text)
+                                                input::paste_text(&processed_text)
                                             {
                                                 tracing::error!(
-                                                    "Failed to type text: {}",
+                                                    "Failed to paste text: {}",
                                                     e
                                                 );
                                                 if let Err(e2) =
-                                                    input::paste_text(&processed_text)
+                                                    input::type_text(&processed_text)
                                                 {
                                                     tracing::error!(
-                                                        "Clipboard paste also failed: {}",
+                                                        "Direct type also failed: {}",
                                                         e2
                                                     );
                                                 }
@@ -220,7 +220,7 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
                                                 "Falling back to raw transcription"
                                             );
                                             state = AppState::Typing;
-                                            let _ = input::type_text(&corrected);
+                                            let _ = input::paste_text(&corrected);
                                         }
                                     }
                                 }
