@@ -1,0 +1,31 @@
+[recognition]
+engine = "whisper_local"  # "whisper_local" | "openai_api"
+
+[recognition.whisper_local]
+model_path = "~/.local/share/koe/models/ggml-large-v3.bin"
+language = "ja"
+
+[recognition.openai_api]
+api_key_env = "OPENAI_API_KEY"
+language = "ja"
+
+[ai]
+engine = "claude"  # "claude" | "ollama"
+
+[ai.claude]
+api_key_env = "ANTHROPIC_API_KEY"
+model = "claude-sonnet-4-6-20250514"
+
+[ai.ollama]
+host = "http://localhost:11434"
+model = "qwen2.5:14b"
+
+[hotkey]
+mode = "push_to_talk"  # "push_to_talk" | "toggle"
+key = "Super_R"
+
+[input]
+method = "direct_type"
+
+[dictionaries]
+paths = ["dictionaries/default.toml"]

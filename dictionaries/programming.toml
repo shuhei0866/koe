@@ -1,0 +1,24 @@
+# プログラミング用辞書
+
+[terms]
+"コンパイラー" = "compiler"
+"コンパイル" = "compile"
+"デバッグ" = "debug"
+"デバッガー" = "debugger"
+"リファクタリング" = "refactoring"
+"インターフェース" = "interface"
+"ストラクト" = "struct"
+"エナム" = "enum"
+"トレイト" = "trait"
+"クレート" = "crate"
+"カーゴ" = "Cargo"
+"タイプスクリプト" = "TypeScript"
+"ジャバスクリプト" = "JavaScript"
+"パイソン" = "Python"
+"リアクト" = "React"
+"ノード" = "Node.js"
+"エーピーアイ" = "API"
+
+[context_hints]
+domain = "プログラミング"
+notes = "技術用語・ライブラリ名は英語表記。変数名やコード片はそのまま維持。"

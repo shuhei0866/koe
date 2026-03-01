@@ -1,0 +1,52 @@
+[package]
+name = "koe"
+version = "0.1.0"
+edition = "2021"
+description = "Ubuntu voice input system powered by Whisper + AI post-processing"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+
+# Audio capture
+cpal = "0.15"
+
+# Speech recognition - local
+whisper-rs = "0.12"
+
+# HTTP client (for OpenAI API, Claude API, Ollama) - use rustls to avoid libssl-dev
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+
+# Global hotkey
+rdev = "0.5"
+
+# Keyboard input simulation
+enigo = { version = "0.2", features = ["x11rb"] }
+
+# X11 window info
+x11rb = { version = "0.13", features = ["all-extensions"] }
+
+# Clipboard
+arboard = "3"
+
+# Serialization / config
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# URL parsing
+url = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Misc
+dirs = "6"
+shellexpand = "3"
+hound = "3.5"
