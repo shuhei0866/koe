@@ -123,7 +123,7 @@ fn default_anthropic_key_env() -> String {
     "ANTHROPIC_API_KEY".to_string()
 }
 fn default_claude_model() -> String {
-    "claude-sonnet-4-6-20250514".to_string()
+    "claude-sonnet-4-6".to_string()
 }
 fn default_ollama_host() -> String {
     "http://localhost:11434".to_string()
@@ -145,6 +145,63 @@ fn default_input_method() -> String {
 fn expand_path(p: &str) -> PathBuf {
     let expanded = shellexpand::tilde(p);
     PathBuf::from(expanded.as_ref())
+}
+
+/// Resolve an API key: try environment variable first, then GNOME Keyring via secret-tool.
+///
+/// The keyring lookup uses attributes `service=koe key=<env_var_name in kebab-case>`.
+/// For example, `ANTHROPIC_API_KEY` → `secret-tool lookup service koe key anthropic-api-key`.
+pub fn resolve_api_key(env_var: &str) -> Result<String> {
+    // 1. Try environment variable
+    if let Ok(val) = std::env::var(env_var) {
+        if !val.is_empty() {
+            return Ok(val);
+        }
+    }
+
+    // 2. Try GNOME Keyring via secret-tool
+    let keyring_key = env_var.to_lowercase().replace('_', "-");
+    match std::process::Command::new("secret-tool")
+        .args(["lookup", "service", "koe", "key", &keyring_key])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let secret = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !secret.is_empty() {
+                return Ok(secret);
+            }
+        }
+        _ => {}
+    }
+
+    anyhow::bail!(
+        "{} is not set (checked env var and GNOME Keyring `secret-tool lookup service koe key {}`)",
+        env_var,
+        keyring_key
+    )
+}
+
+/// Store an API key in the GNOME Keyring via secret-tool.
+///
+/// Uses attributes `service=koe key=<env_var_name in kebab-case>`.
+pub fn store_api_key_in_keyring(env_var: &str, secret: &str) -> Result<()> {
+    let keyring_key = env_var.to_lowercase().replace('_', "-");
+    let mut child = std::process::Command::new("secret-tool")
+        .args(["store", "--label", &format!("koe {}", keyring_key), "service", "koe", "key", &keyring_key])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .context("launching secret-tool store")?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin.write_all(secret.as_bytes()).context("writing secret to stdin")?;
+    }
+
+    let status = child.wait().context("waiting for secret-tool")?;
+    if !status.success() {
+        anyhow::bail!("secret-tool store failed with status {}", status);
+    }
+    Ok(())
 }
 
 impl Config {
@@ -203,5 +260,122 @@ impl Config {
             .iter()
             .map(|p| expand_path(p))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_resolve_api_key_from_env() {
+        // Set a temporary env var
+        std::env::set_var("KOE_TEST_API_KEY_12345", "test-secret-value");
+        let result = resolve_api_key("KOE_TEST_API_KEY_12345");
+        std::env::remove_var("KOE_TEST_API_KEY_12345");
+        assert_eq!(result.unwrap(), "test-secret-value");
+    }
+
+    #[test]
+    fn test_resolve_api_key_empty_env_falls_through() {
+        // Empty env var should not be returned
+        std::env::set_var("KOE_TEST_EMPTY_KEY", "");
+        let result = resolve_api_key("KOE_TEST_EMPTY_KEY");
+        std::env::remove_var("KOE_TEST_EMPTY_KEY");
+        // Should fail (no keyring entry either)
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_api_key_missing_env_and_keyring() {
+        // Non-existent env var and no keyring entry
+        std::env::remove_var("KOE_TEST_NONEXISTENT_KEY_99999");
+        let result = resolve_api_key("KOE_TEST_NONEXISTENT_KEY_99999");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("KOE_TEST_NONEXISTENT_KEY_99999"));
+    }
+
+    #[test]
+    fn test_config_roundtrip_toml() {
+        let config = Config {
+            recognition: RecognitionConfig {
+                engine: RecognitionEngine::WhisperLocal,
+                whisper_local: Some(WhisperLocalConfig {
+                    model_path: "/tmp/model.bin".to_string(),
+                    language: "ja".to_string(),
+                }),
+                openai_api: None,
+            },
+            ai: AiConfig {
+                engine: AiEngine::Claude,
+                claude: Some(ClaudeConfig {
+                    api_key_env: "ANTHROPIC_API_KEY".to_string(),
+                    model: "claude-sonnet-4-6".to_string(),
+                }),
+                ollama: None,
+            },
+            hotkey: HotkeyConfig {
+                mode: HotkeyMode::PushToTalk,
+                key: "Super_R".to_string(),
+            },
+            input: InputConfig {
+                method: "direct_type".to_string(),
+            },
+            dictionaries: DictionaryConfig { paths: vec![] },
+        };
+
+        // Save to temp file
+        let dir = std::env::temp_dir().join("koe-test-config");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test-config.toml");
+        config.save(&path).unwrap();
+
+        // Load back
+        let loaded = Config::load_from(&path).unwrap();
+        assert_eq!(loaded.ai.engine, AiEngine::Claude);
+        assert_eq!(loaded.ai.claude.unwrap().model, "claude-sonnet-4-6");
+        assert_eq!(loaded.recognition.engine, RecognitionEngine::WhisperLocal);
+        assert_eq!(loaded.hotkey.mode, HotkeyMode::PushToTalk);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_config_deserialize_defaults() {
+        let toml_str = r#"
+[recognition]
+engine = "whisper_local"
+
+[recognition.whisper_local]
+model_path = "/tmp/model.bin"
+
+[ai]
+engine = "claude"
+
+[ai.claude]
+api_key_env = "ANTHROPIC_API_KEY"
+
+[hotkey]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        // Defaults should be applied
+        assert_eq!(config.hotkey.mode, HotkeyMode::PushToTalk);
+        assert_eq!(config.hotkey.key, "Super_R");
+        assert_eq!(config.ai.claude.unwrap().model, "claude-sonnet-4-6");
+        assert_eq!(config.input.method, "direct_type");
+    }
+
+    /// Integration test: resolve API key from GNOME Keyring.
+    /// Run with: cargo test test_resolve_api_key_from_keyring -- --ignored
+    #[test]
+    #[ignore]
+    fn test_resolve_api_key_from_keyring() {
+        // This requires a key stored in GNOME Keyring:
+        //   secret-tool store --label "koe anthropic-api-key" service koe key anthropic-api-key
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        let result = resolve_api_key("ANTHROPIC_API_KEY");
+        assert!(result.is_ok(), "Expected keyring to have ANTHROPIC_API_KEY: {:?}", result.err());
+        assert!(!result.unwrap().is_empty());
     }
 }
