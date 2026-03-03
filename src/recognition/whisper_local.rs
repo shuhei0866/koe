@@ -10,6 +10,7 @@ use super::SpeechRecognizer;
 pub struct WhisperLocalRecognizer {
     ctx: WhisperContext,
     language: String,
+    prompt_hint: String,
 }
 
 impl WhisperLocalRecognizer {
@@ -34,12 +35,17 @@ impl WhisperLocalRecognizer {
         Ok(Self {
             ctx,
             language: config.language.clone(),
+            prompt_hint: String::new(),
         })
     }
 }
 
 #[async_trait]
 impl SpeechRecognizer for WhisperLocalRecognizer {
+    fn set_prompt_hint(&mut self, hint: &str) {
+        self.prompt_hint = hint.to_string();
+    }
+
     async fn transcribe(&self, audio: &AudioData) -> Result<String> {
         let samples = audio.resample_to_16khz();
 
@@ -48,6 +54,7 @@ impl SpeechRecognizer for WhisperLocalRecognizer {
         }
 
         let language = self.language.clone();
+        let prompt_hint = self.prompt_hint.clone();
 
         // whisper-rs is blocking, so run in a blocking thread
         let ctx_ptr = &self.ctx as *const WhisperContext as usize;
@@ -65,6 +72,10 @@ impl SpeechRecognizer for WhisperLocalRecognizer {
             params.set_print_timestamps(false);
             params.set_suppress_blank(true);
             params.set_suppress_non_speech_tokens(true);
+
+            if !prompt_hint.is_empty() {
+                params.set_initial_prompt(&prompt_hint);
+            }
 
             state
                 .full(params, &samples)

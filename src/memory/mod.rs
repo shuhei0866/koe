@@ -61,7 +61,7 @@ impl Memory {
         if context_path.exists() {
             let content = std::fs::read_to_string(&context_path)
                 .with_context(|| format!("reading {}", context_path.display()))?;
-            memory.context = Self::parse_context_md(&content);
+            memory.context = Self::parse_context_markdown(&content);
         }
 
         Ok(memory)
@@ -109,6 +109,30 @@ impl Memory {
         }
     }
 
+    /// Format terms for Whisper initial_prompt.
+    /// Returns comma-separated list of correct term forms (the "to" side).
+    /// Example: "Rust, Claude, koe, Ubuntu"
+    pub fn format_for_whisper_hint(&self) -> String {
+        if self.terms.is_empty() {
+            return String::new();
+        }
+        let mut terms: Vec<&str> = self.terms.values().map(|s| s.as_str()).collect();
+        terms.sort();
+        terms.dedup();
+        terms.join(", ")
+    }
+
+    /// Count total entries (terms + all context entries).
+    pub fn total_entries(&self) -> usize {
+        let context_count: usize = self.context.sections.values().map(|v| v.len()).sum();
+        self.terms.len() + context_count
+    }
+
+    /// Check if memory has accumulated enough entries to warrant consolidation.
+    pub fn needs_consolidation(&self, threshold: usize) -> bool {
+        self.total_entries() >= threshold
+    }
+
     /// Format memory for injection into an AI prompt.
     pub fn format_for_prompt(&self) -> String {
         let mut parts = Vec::new();
@@ -137,8 +161,8 @@ impl Memory {
         parts.join("\n\n")
     }
 
-    /// Parse context.md content into MemoryContext.
-    fn parse_context_md(content: &str) -> MemoryContext {
+    /// Parse context markdown content into MemoryContext.
+    pub fn parse_context_markdown(content: &str) -> MemoryContext {
         let mut sections: HashMap<String, Vec<String>> = HashMap::new();
         let mut current_category: Option<String> = None;
 
@@ -307,6 +331,56 @@ mod tests {
         let mem = Memory::load(&dir).unwrap();
         assert!(mem.terms.is_empty());
         assert!(mem.context.sections.is_empty());
+    }
+
+    #[test]
+    fn test_format_for_whisper_hint() {
+        let dir = test_dir("whisper_hint");
+        let mut mem = Memory::load(&dir).unwrap();
+        mem.add_term("ラスト", "Rust");
+        mem.add_term("クロード", "Claude");
+        mem.add_term("コエ", "koe");
+        let hint = mem.format_for_whisper_hint();
+        assert!(hint.contains("Rust"));
+        assert!(hint.contains("Claude"));
+        assert!(hint.contains("koe"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_total_entries() {
+        let dir = test_dir("total_entries");
+        let mut mem = Memory::load(&dir).unwrap();
+        assert_eq!(mem.total_entries(), 0);
+
+        mem.add_term("a", "A");
+        mem.add_term("b", "B");
+        mem.add_context("domain", "ソフトウェア");
+        assert_eq!(mem.total_entries(), 3);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_format_for_whisper_hint_empty() {
+        let dir = test_dir("whisper_hint_empty");
+        let mem = Memory::load(&dir).unwrap();
+        assert_eq!(mem.format_for_whisper_hint(), "");
+    }
+
+    #[test]
+    fn test_needs_consolidation() {
+        let dir = test_dir("needs_consolidation");
+        let mut mem = Memory::load(&dir).unwrap();
+        assert!(!mem.needs_consolidation(3));
+
+        mem.add_term("a", "A");
+        mem.add_term("b", "B");
+        mem.add_context("domain", "test");
+        assert!(mem.needs_consolidation(3));
+        assert!(!mem.needs_consolidation(4));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

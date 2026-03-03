@@ -6,7 +6,7 @@ use crate::config::OllamaConfig;
 use crate::context::WindowContext;
 use crate::dictionary::Dictionary;
 
-use super::{build_system_prompt, ProcessResult, TextProcessor};
+use super::{build_system_prompt, ConsolidationResult, ProcessResult, TextProcessor};
 
 pub struct OllamaProcessor {
     host: String,
@@ -72,5 +72,12 @@ impl TextProcessor for OllamaProcessor {
             text,
             learnings: vec![],
         })
+    }
+
+    async fn consolidate_memory(
+        &self,
+        _memory_content: &str,
+    ) -> Result<Option<ConsolidationResult>> {
+        Ok(None)
     }
 }
