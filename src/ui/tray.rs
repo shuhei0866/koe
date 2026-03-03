@@ -1,7 +1,9 @@
 use ksni::menu::StandardItem;
 use ksni::{Tray, TrayMethods};
 
-struct KoeTray;
+struct KoeTray {
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
+}
 
 impl Tray for KoeTray {
     fn id(&self) -> String {
@@ -40,8 +42,8 @@ impl Tray for KoeTray {
             ksni::MenuItem::Separator,
             StandardItem {
                 label: "Quit".to_string(),
-                activate: Box::new(|_| {
-                    std::process::exit(0);
+                activate: Box::new(|this: &mut Self| {
+                    let _ = this.shutdown_tx.send(true);
                 }),
                 ..Default::default()
             }
@@ -51,9 +53,9 @@ impl Tray for KoeTray {
 }
 
 /// Start the system tray icon (async, runs in a tokio task).
-pub fn start_tray() {
-    tokio::spawn(async {
-        match KoeTray.spawn().await {
+pub fn start_tray(shutdown_tx: tokio::sync::watch::Sender<bool>) {
+    tokio::spawn(async move {
+        match (KoeTray { shutdown_tx }).spawn().await {
             Ok(_handle) => {
                 tracing::info!("System tray started");
             }
