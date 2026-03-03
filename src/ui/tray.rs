@@ -3,6 +3,7 @@ use ksni::{Handle, Tray, TrayMethods};
 
 pub struct KoeTray {
     pub current_icon: String,
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
 }
 
 impl Tray for KoeTray {
@@ -42,8 +43,8 @@ impl Tray for KoeTray {
             ksni::MenuItem::Separator,
             StandardItem {
                 label: "Quit".to_string(),
-                activate: Box::new(|_| {
-                    std::process::exit(0);
+                activate: Box::new(|this: &mut Self| {
+                    let _ = this.shutdown_tx.send(true);
                 }),
                 ..Default::default()
             }
@@ -74,9 +75,10 @@ pub async fn update_tray_icon(handle: &Handle<KoeTray>, state: &str) {
 }
 
 /// Start the system tray icon and return the handle for dynamic updates.
-pub async fn start_tray() -> Result<Handle<KoeTray>, ksni::Error> {
+pub async fn start_tray(shutdown_tx: tokio::sync::watch::Sender<bool>) -> Result<Handle<KoeTray>, ksni::Error> {
     let tray = KoeTray {
         current_icon: "audio-input-microphone".to_string(),
+        shutdown_tx,
     };
     let handle = tray.spawn().await?;
     tracing::info!("System tray started");
@@ -86,6 +88,11 @@ pub async fn start_tray() -> Result<Handle<KoeTray>, ksni::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn make_shutdown_tx() -> tokio::sync::watch::Sender<bool> {
+        let (tx, _rx) = tokio::sync::watch::channel(false);
+        tx
+    }
 
     #[test]
     fn test_icon_for_state() {
@@ -105,6 +112,7 @@ mod tests {
     fn test_koe_tray_initial_icon() {
         let tray = KoeTray {
             current_icon: "audio-input-microphone".to_string(),
+            shutdown_tx: make_shutdown_tx(),
         };
         assert_eq!(tray.icon_name(), "audio-input-microphone");
     }
@@ -113,6 +121,7 @@ mod tests {
     fn test_koe_tray_custom_icon() {
         let tray = KoeTray {
             current_icon: "media-record".to_string(),
+            shutdown_tx: make_shutdown_tx(),
         };
         assert_eq!(tray.icon_name(), "media-record");
     }
@@ -121,6 +130,7 @@ mod tests {
     fn test_koe_tray_id() {
         let tray = KoeTray {
             current_icon: String::new(),
+            shutdown_tx: make_shutdown_tx(),
         };
         assert_eq!(tray.id(), "koe");
     }
@@ -129,6 +139,7 @@ mod tests {
     fn test_koe_tray_title() {
         let tray = KoeTray {
             current_icon: String::new(),
+            shutdown_tx: make_shutdown_tx(),
         };
         assert_eq!(tray.title(), "koe");
     }
@@ -137,6 +148,7 @@ mod tests {
     fn test_koe_tray_tooltip() {
         let tray = KoeTray {
             current_icon: String::new(),
+            shutdown_tx: make_shutdown_tx(),
         };
         let tip = tray.tool_tip();
         assert_eq!(tip.title, "koe - Voice Input");
