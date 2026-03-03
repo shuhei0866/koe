@@ -18,7 +18,7 @@ pub struct MemoryContext {
 }
 
 /// Memory manages learned terms and contextual information for AI post-processing.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Memory {
     /// from -> to term dictionary
     pub terms: HashMap<String, String>,

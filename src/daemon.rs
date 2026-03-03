@@ -3,7 +3,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use crate::ipc;
-use crate::{ai, audio, config, context, dictionary, hotkey, input, recognition};
+use crate::{ai, audio, config, context, dictionary, hotkey, input, memory, recognition};
 
 /// Application state machine.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,6 +26,19 @@ impl std::fmt::Display for AppState {
 }
 
 pub async fn run_daemon(config: config::Config) -> Result<()> {
+    // Load memory (auto-learned data)
+    let memory_dir = config.memory_dir();
+    let mut mem = if config.memory.enabled {
+        memory::Memory::load(&memory_dir).context("loading memory")?
+    } else {
+        memory::Memory::default()
+    };
+    tracing::info!(
+        "Memory loaded: {} terms, {} context sections",
+        mem.terms.len(),
+        mem.context.sections.len()
+    );
+
     // Load dictionaries
     let dict_paths = config.dictionary_paths();
     let mut dictionary =
@@ -122,6 +135,20 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
                                 }
                             }
 
+                            // Reload memory
+                            if new_config.memory.enabled {
+                                let new_memory_dir = new_config.memory_dir();
+                                match memory::Memory::load(&new_memory_dir) {
+                                    Ok(new_mem) => {
+                                        mem = new_mem;
+                                        tracing::info!("Memory reloaded");
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to reload memory: {}", e);
+                                    }
+                                }
+                            }
+
                             tracing::info!("Config reloaded successfully");
                         }
                         Err(e) => {
@@ -183,26 +210,48 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
                                     let corrected = dictionary.apply_terms(&raw_text);
 
                                     // AI post-processing
+                                    let memory_context = mem.format_for_prompt();
                                     match processor
-                                        .process(&corrected, &window_ctx, &dictionary)
+                                        .process(&corrected, &window_ctx, &dictionary, &memory_context)
                                         .await
                                     {
-                                        Ok(processed_text) => {
+                                        Ok(result) => {
                                             tracing::info!(
-                                                "Processed text: {}",
-                                                processed_text
+                                                "Processed text: {} (learnings: {})",
+                                                result.text,
+                                                result.learnings.len()
                                             );
+
+                                            // Save learnings to memory
+                                            for learning in &result.learnings {
+                                                match learning {
+                                                    ai::Learning::Term { from, to } => {
+                                                        tracing::info!("Learned term: {} → {}", from, to);
+                                                        mem.add_term(from, to);
+                                                    }
+                                                    ai::Learning::Context { category, content } => {
+                                                        tracing::info!("Learned context [{}]: {}", category, content);
+                                                        mem.add_context(category, content);
+                                                    }
+                                                }
+                                            }
+                                            if !result.learnings.is_empty() {
+                                                if let Err(e) = mem.save() {
+                                                    tracing::error!("Failed to save memory: {}", e);
+                                                }
+                                            }
+
                                             state = AppState::Typing;
 
                                             if let Err(e) =
-                                                input::type_text(&processed_text)
+                                                input::type_text(&result.text)
                                             {
                                                 tracing::error!(
                                                     "Failed to type text: {}",
                                                     e
                                                 );
                                                 if let Err(e2) =
-                                                    input::paste_text(&processed_text)
+                                                    input::paste_text(&result.text)
                                                 {
                                                     tracing::error!(
                                                         "Clipboard paste also failed: {}",
