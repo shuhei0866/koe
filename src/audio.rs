@@ -2,15 +2,66 @@ use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
 
-/// List available input device names.
+/// List connected input devices with human-readable names.
+///
+/// Cross-references cpal's capture-capable input devices with `/proc/asound/cards`
+/// to show friendly card descriptions (e.g. "Logicool BRIO") instead of raw ALSA
+/// PCM names (e.g. "front:CARD=BRIO,DEV=0"). Playback-only cards (HDMI, etc.)
+/// are excluded because they don't appear in cpal's input device list.
+/// Falls back to raw cpal names on non-Linux or if procfs is unavailable.
 pub fn list_input_devices() -> Result<Vec<String>> {
     let host = cpal::default_host();
-    let devices: Vec<String> = host
+    let input_names: Vec<String> = host
         .input_devices()
         .context("listing input devices")?
         .filter_map(|d| d.name().ok())
         .collect();
-    Ok(devices)
+
+    // Try to resolve friendly names from /proc/asound/cards
+    if let Ok(cards_content) = std::fs::read_to_string("/proc/asound/cards") {
+        // Build card_id → description map
+        // Format: " 0 [BRIO           ]: USB-Audio - Logicool BRIO"
+        let card_map: std::collections::HashMap<String, String> = cards_content
+            .lines()
+            .filter_map(|line| {
+                let bracket_start = line.find('[')?;
+                let bracket_end = line.find(']')?;
+                let card_id = line[bracket_start + 1..bracket_end].trim().to_string();
+                let dash = line.find(" - ")?;
+                let description = line[dash + 3..].trim().to_string();
+                if description.is_empty() { None } else { Some((card_id, description)) }
+            })
+            .collect();
+
+        // Extract CARD=xxx from cpal input device names, deduplicate, resolve to descriptions
+        let mut seen = std::collections::HashSet::new();
+        let mut friendly: Vec<String> = Vec::new();
+        for name in &input_names {
+            if let Some(card_id) = extract_card_id(name) {
+                if seen.insert(card_id.clone()) {
+                    if let Some(desc) = card_map.get(&card_id) {
+                        friendly.push(desc.clone());
+                    } else {
+                        friendly.push(name.clone());
+                    }
+                }
+            }
+        }
+        if !friendly.is_empty() {
+            return Ok(friendly);
+        }
+    }
+
+    // Fallback: raw cpal names
+    Ok(input_names)
+}
+
+/// Extract the card identifier from an ALSA PCM name (e.g. "front:CARD=BRIO,DEV=0" → "BRIO").
+fn extract_card_id(pcm_name: &str) -> Option<String> {
+    let start = pcm_name.find("CARD=")? + 5;
+    let rest = &pcm_name[start..];
+    let end = rest.find(',').unwrap_or(rest.len());
+    Some(rest[..end].to_string())
 }
 
 /// Raw audio data in the format expected by whisper: 16kHz mono f32 PCM.
