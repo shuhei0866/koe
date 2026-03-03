@@ -2,8 +2,27 @@ use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
 
-/// List available input device names.
+/// List connected input devices with human-readable names.
+///
+/// Reads `/proc/asound/cards` to get friendly card descriptions (e.g. "Logicool BRIO")
+/// instead of raw ALSA PCM names (e.g. "front:CARD=BRIO,DEV=0").
+/// Only currently connected cards appear in procfs, so disconnected devices are excluded.
+/// Falls back to cpal device names on non-Linux or if procfs is unavailable.
 pub fn list_input_devices() -> Result<Vec<String>> {
+    if let Ok(cards) = std::fs::read_to_string("/proc/asound/cards") {
+        let devices: Vec<String> = cards
+            .lines()
+            .filter_map(|line| {
+                let dash = line.find(" - ")?;
+                let name = line[dash + 3..].trim();
+                if name.is_empty() { None } else { Some(name.to_string()) }
+            })
+            .collect();
+        if !devices.is_empty() {
+            return Ok(devices);
+        }
+    }
+    // Fallback: raw cpal names
     let host = cpal::default_host();
     let devices: Vec<String> = host
         .input_devices()
