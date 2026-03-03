@@ -69,7 +69,8 @@ pub async fn start(
                         }
                         Err(e) => {
                             tracing::error!("IPC accept error: {}", e);
-                            break;
+                            // Sleep briefly to avoid busy-looping on persistent errors
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                         }
                     }
                 }
