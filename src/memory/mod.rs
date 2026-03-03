@@ -109,6 +109,19 @@ impl Memory {
         }
     }
 
+    /// Format terms for Whisper initial_prompt.
+    /// Returns comma-separated list of correct term forms (the "to" side).
+    /// Example: "Rust, Claude, koe, Ubuntu"
+    pub fn format_for_whisper_hint(&self) -> String {
+        if self.terms.is_empty() {
+            return String::new();
+        }
+        let mut terms: Vec<&str> = self.terms.values().map(|s| s.as_str()).collect();
+        terms.sort();
+        terms.dedup();
+        terms.join(", ")
+    }
+
     /// Format memory for injection into an AI prompt.
     pub fn format_for_prompt(&self) -> String {
         let mut parts = Vec::new();
@@ -307,6 +320,27 @@ mod tests {
         let mem = Memory::load(&dir).unwrap();
         assert!(mem.terms.is_empty());
         assert!(mem.context.sections.is_empty());
+    }
+
+    #[test]
+    fn test_format_for_whisper_hint() {
+        let dir = test_dir("whisper_hint");
+        let mut mem = Memory::load(&dir).unwrap();
+        mem.add_term("ラスト", "Rust");
+        mem.add_term("クロード", "Claude");
+        mem.add_term("コエ", "koe");
+        let hint = mem.format_for_whisper_hint();
+        assert!(hint.contains("Rust"));
+        assert!(hint.contains("Claude"));
+        assert!(hint.contains("koe"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_format_for_whisper_hint_empty() {
+        let dir = test_dir("whisper_hint_empty");
+        let mem = Memory::load(&dir).unwrap();
+        assert_eq!(mem.format_for_whisper_hint(), "");
     }
 
     #[test]
