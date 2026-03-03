@@ -25,7 +25,7 @@ impl std::fmt::Display for AppState {
     }
 }
 
-pub async fn run_daemon(config: config::Config) -> Result<()> {
+pub async fn run_daemon(mut config: config::Config) -> Result<()> {
     // Load memory (auto-learned data)
     let memory_dir = config.memory_dir();
     let mut mem = if config.memory.enabled {
@@ -164,6 +164,7 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
                                 tracing::info!("Whisper hint restored: {} terms", mem.terms.len());
                             }
 
+                            config = new_config;
                             tracing::info!("Config reloaded successfully");
                         }
                         Err(e) => {
@@ -326,7 +327,14 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
                                 } else {
                                     let old_terms = std::mem::take(&mut mem.terms);
                                     let old_context = std::mem::take(&mut mem.context);
-                                    mem.terms = result.terms;
+                                    // Only replace terms if consolidation produced non-empty terms;
+                                    // an empty map likely means the LLM omitted the terms JSON.
+                                    if result.terms.is_empty() {
+                                        tracing::warn!("Consolidation returned empty terms, keeping existing {} terms", old_terms.len());
+                                        mem.terms = old_terms.clone();
+                                    } else {
+                                        mem.terms = result.terms;
+                                    }
                                     mem.context = memory::Memory::parse_context_markdown(&result.context_markdown);
                                     if let Err(e) = mem.save() {
                                         tracing::error!("Failed to save consolidated memory, rolling back: {}", e);
