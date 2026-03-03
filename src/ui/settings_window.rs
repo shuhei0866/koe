@@ -726,7 +726,14 @@ fn create_autostart_entry() -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("koe"));
+    let local_bin = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".local/bin/koe");
+    let exe = if local_bin.exists() {
+        local_bin
+    } else {
+        std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("koe"))
+    };
     let content = format!(
         "[Desktop Entry]\nType=Application\nName=koe\nExec={}\nX-GNOME-Autostart-enabled=true\n",
         exe.display()
