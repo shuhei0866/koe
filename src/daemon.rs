@@ -335,7 +335,14 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                 } else {
                                     let old_terms = std::mem::take(&mut mem.terms);
                                     let old_context = std::mem::take(&mut mem.context);
-                                    mem.terms = result.terms;
+                                    // Only replace terms if consolidation produced non-empty terms;
+                                    // an empty map likely means the LLM omitted the terms JSON.
+                                    if result.terms.is_empty() {
+                                        tracing::warn!("Consolidation returned empty terms, keeping existing {} terms", old_terms.len());
+                                        mem.terms = old_terms.clone();
+                                    } else {
+                                        mem.terms = result.terms;
+                                    }
                                     mem.context = memory::Memory::parse_context_markdown(&result.context_markdown);
                                     if let Err(e) = mem.save() {
                                         tracing::error!("Failed to save consolidated memory, rolling back: {}", e);
