@@ -119,20 +119,38 @@ impl AudioData {
     }
 }
 
+/// Compute the RMS (root mean square) level of an audio chunk.
+pub fn compute_rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+}
+
 /// Audio recorder using cpal.
 pub struct AudioRecorder {
     buffer: Arc<Mutex<Vec<f32>>>,
     stream: Option<cpal::Stream>,
     sample_rate: u32,
+    rms_sender: tokio::sync::watch::Sender<f32>,
+    rms_receiver: tokio::sync::watch::Receiver<f32>,
 }
 
 impl AudioRecorder {
     pub fn new() -> Result<Self> {
+        let (rms_sender, rms_receiver) = tokio::sync::watch::channel(0.0f32);
         Ok(Self {
             buffer: Arc::new(Mutex::new(Vec::new())),
             stream: None,
             sample_rate: 0,
+            rms_sender,
+            rms_receiver,
         })
+    }
+
+    /// Get a receiver for the current RMS audio level (updated each audio callback).
+    pub fn rms_receiver(&self) -> tokio::sync::watch::Receiver<f32> {
+        self.rms_receiver.clone()
     }
 
     /// Start recording from the default input device.
@@ -157,6 +175,7 @@ impl AudioRecorder {
 
         let buffer = self.buffer.clone();
         let channels = config.channels() as usize;
+        let rms_sender = self.rms_sender.clone();
 
         // Clear previous buffer
         buffer.lock().unwrap().clear();
@@ -170,27 +189,40 @@ impl AudioRecorder {
                 &config.into(),
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
                     let mut buf = buffer.lock().unwrap();
-                    // Convert to mono by averaging channels
+                    // Convert to mono by averaging channels, compute RMS incrementally
+                    let mut sum_sq = 0.0f32;
+                    let mut count = 0usize;
                     for chunk in data.chunks(channels) {
                         let mono: f32 = chunk.iter().sum::<f32>() / channels as f32;
                         buf.push(mono);
+                        sum_sq += mono * mono;
+                        count += 1;
                     }
+                    let rms = if count > 0 { (sum_sq / count as f32).sqrt() } else { 0.0 };
+                    let _ = rms_sender.send(rms);
                 },
                 err_fn,
                 None,
             )?,
             cpal::SampleFormat::I16 => {
                 let buffer = self.buffer.clone();
+                let rms_sender_i16 = self.rms_sender.clone();
                 device.build_input_stream(
                     &config.into(),
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
                         let mut buf = buffer.lock().unwrap();
+                        let mut sum_sq = 0.0f32;
+                        let mut count = 0usize;
                         for chunk in data.chunks(channels) {
                             let mono: f32 =
                                 chunk.iter().map(|&s| s as f32 / 32768.0).sum::<f32>()
                                     / channels as f32;
                             buf.push(mono);
+                            sum_sq += mono * mono;
+                            count += 1;
                         }
+                        let rms = if count > 0 { (sum_sq / count as f32).sqrt() } else { 0.0 };
+                        let _ = rms_sender_i16.send(rms);
                     },
                     err_fn,
                     None,
@@ -229,5 +261,63 @@ impl AudioRecorder {
 
     pub fn is_recording(&self) -> bool {
         self.stream.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_rms_silence() {
+        let samples = vec![0.0f32; 100];
+        let rms = compute_rms(&samples);
+        assert!((rms - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_compute_rms_empty() {
+        let rms = compute_rms(&[]);
+        assert!((rms - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_compute_rms_known_values() {
+        // All samples at 1.0 => RMS = 1.0
+        let samples = vec![1.0f32; 100];
+        let rms = compute_rms(&samples);
+        assert!((rms - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_compute_rms_sine_wave() {
+        // RMS of a sine wave of amplitude A = A / sqrt(2)
+        let amplitude = 0.5f32;
+        let samples: Vec<f32> = (0..10000)
+            .map(|i| amplitude * (2.0 * std::f32::consts::PI * i as f32 / 100.0).sin())
+            .collect();
+        let rms = compute_rms(&samples);
+        let expected = amplitude / 2.0f32.sqrt();
+        assert!(
+            (rms - expected).abs() < 0.01,
+            "RMS {} should be close to {}",
+            rms,
+            expected
+        );
+    }
+
+    #[test]
+    fn test_compute_rms_negative_values() {
+        // RMS of [-0.5, 0.5] = sqrt((0.25 + 0.25) / 2) = 0.5
+        let samples = vec![-0.5f32, 0.5];
+        let rms = compute_rms(&samples);
+        assert!((rms - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_rms_receiver_initial_value() {
+        let recorder = AudioRecorder::new().unwrap();
+        let rx = recorder.rms_receiver();
+        assert!(((*rx.borrow()) - 0.0).abs() < f32::EPSILON);
     }
 }

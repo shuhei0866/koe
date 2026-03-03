@@ -11,6 +11,8 @@ mod memory;
 mod input;
 mod ipc;
 mod recognition;
+mod dbus;
+mod sound;
 #[cfg(feature = "gui")]
 mod ui;
 

@@ -13,6 +13,8 @@ pub struct Config {
     pub dictionaries: DictionaryConfig,
     #[serde(default)]
     pub memory: MemoryConfig,
+    #[serde(default)]
+    pub feedback: FeedbackConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -133,6 +135,30 @@ impl Default for MemoryConfig {
             consolidation_threshold: default_consolidation_threshold(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct FeedbackConfig {
+    #[serde(default = "default_feedback_sound_enabled")]
+    pub sound_enabled: bool,
+    #[serde(default = "default_feedback_indicator_enabled")]
+    pub indicator_enabled: bool,
+}
+
+impl Default for FeedbackConfig {
+    fn default() -> Self {
+        Self {
+            sound_enabled: default_feedback_sound_enabled(),
+            indicator_enabled: default_feedback_indicator_enabled(),
+        }
+    }
+}
+
+fn default_feedback_sound_enabled() -> bool {
+    true
+}
+fn default_feedback_indicator_enabled() -> bool {
+    true
 }
 
 fn default_language() -> String {
@@ -359,6 +385,7 @@ mod tests {
             },
             dictionaries: DictionaryConfig { paths: vec![] },
             memory: MemoryConfig::default(),
+            feedback: FeedbackConfig::default(),
         };
 
         // Save to temp file
@@ -374,6 +401,8 @@ mod tests {
         assert_eq!(loaded.recognition.engine, RecognitionEngine::WhisperLocal);
         assert_eq!(loaded.hotkey.mode, HotkeyMode::PushToTalk);
         assert_eq!(loaded.memory.consolidation_threshold, default_consolidation_threshold());
+        assert!(loaded.feedback.sound_enabled);
+        assert!(loaded.feedback.indicator_enabled);
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&dir);
@@ -402,6 +431,42 @@ api_key_env = "ANTHROPIC_API_KEY"
         assert_eq!(config.hotkey.key, "Super_R");
         assert_eq!(config.ai.claude.unwrap().model, "claude-sonnet-4-6");
         assert_eq!(config.input.method, "direct_type");
+        // feedback should have defaults
+        assert!(config.feedback.sound_enabled);
+        assert!(config.feedback.indicator_enabled);
+    }
+
+    #[test]
+    fn test_feedback_config_defaults() {
+        let feedback = FeedbackConfig::default();
+        assert!(feedback.sound_enabled);
+        assert!(feedback.indicator_enabled);
+    }
+
+    #[test]
+    fn test_feedback_config_custom_values() {
+        let toml_str = r#"
+[recognition]
+engine = "whisper_local"
+
+[recognition.whisper_local]
+model_path = "/tmp/model.bin"
+
+[ai]
+engine = "claude"
+
+[ai.claude]
+api_key_env = "ANTHROPIC_API_KEY"
+
+[hotkey]
+
+[feedback]
+sound_enabled = false
+indicator_enabled = false
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(!config.feedback.sound_enabled);
+        assert!(!config.feedback.indicator_enabled);
     }
 
     /// Integration test: resolve API key from GNOME Keyring.

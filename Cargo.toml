@@ -1,6 +1,6 @@
 [package]
 name = "koe"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 description = "Ubuntu voice input system powered by Whisper + AI post-processing"
 
@@ -54,6 +54,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Error handling
 anyhow = "1"
 thiserror = "2"
+
+# D-Bus
+zbus = "5"
 
 # Misc
 dirs = "6"
