@@ -64,6 +64,7 @@ impl SpeechRecognizer for WhisperLocalRecognizer {
             params.set_print_realtime(false);
             params.set_print_timestamps(false);
             params.set_suppress_blank(true);
+            params.set_suppress_nst(true);
 
             state
                 .full(params, &samples)
