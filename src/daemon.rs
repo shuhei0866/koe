@@ -119,7 +119,8 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
 
     // Main event loop
     loop {
-        // Check for shutdown signal (from SIGTERM/SIGINT/tray)
+        // Check for shutdown signal (from SIGTERM/SIGINT/tray).
+        // Worst-case latency is ~100ms (hotkey recv_timeout below).
         if *shutdown_rx.borrow() {
             tracing::info!("Shutdown signal received, exiting main loop");
             break;
