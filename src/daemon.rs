@@ -25,7 +25,7 @@ impl std::fmt::Display for AppState {
     }
 }
 
-pub async fn run_daemon(config: config::Config) -> Result<()> {
+pub async fn run_daemon(mut config: config::Config) -> Result<()> {
     // Load memory (auto-learned data)
     let memory_dir = config.memory_dir();
     let mut mem = if config.memory.enabled {
@@ -164,6 +164,7 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
                                 tracing::info!("Whisper hint restored: {} terms", mem.terms.len());
                             }
 
+                            config = new_config;
                             tracing::info!("Config reloaded successfully");
                         }
                         Err(e) => {
@@ -237,20 +238,20 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
                                                 result.learnings.len()
                                             );
 
-                                            // Save learnings to memory
-                                            for learning in &result.learnings {
-                                                match learning {
-                                                    ai::Learning::Term { from, to } => {
-                                                        tracing::info!("Learned term: {} → {}", from, to);
-                                                        mem.add_term(from, to);
-                                                    }
-                                                    ai::Learning::Context { category, content } => {
-                                                        tracing::info!("Learned context [{}]: {}", category, content);
-                                                        mem.add_context(category, content);
+                                            // Save learnings to memory (only when memory is enabled)
+                                            if config.memory.enabled && !result.learnings.is_empty() {
+                                                for learning in &result.learnings {
+                                                    match learning {
+                                                        ai::Learning::Term { from, to } => {
+                                                            tracing::info!("Learned term: {} → {}", from, to);
+                                                            mem.add_term(from, to);
+                                                        }
+                                                        ai::Learning::Context { category, content } => {
+                                                            tracing::info!("Learned context [{}]: {}", category, content);
+                                                            mem.add_context(category, content);
+                                                        }
                                                     }
                                                 }
-                                            }
-                                            if !result.learnings.is_empty() {
                                                 if let Err(e) = mem.save() {
                                                     tracing::error!("Failed to save memory: {}", e);
                                                 }
@@ -320,9 +321,17 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
                         );
                         match processor.consolidate_memory(&mem.format_for_prompt()).await {
                             Ok(Some(result)) => {
-                                // Guard: reject empty consolidation results
-                                if result.terms.is_empty() && result.context_markdown.trim().is_empty() {
-                                    tracing::warn!("Consolidation returned empty result, skipping to protect existing data");
+                                // Guard: reject consolidation results that would lose data
+                                let would_lose_terms = result.terms.is_empty() && !mem.terms.is_empty();
+                                if (result.terms.is_empty() && result.context_markdown.trim().is_empty())
+                                    || would_lose_terms
+                                {
+                                    tracing::warn!(
+                                        "Consolidation result rejected (terms: {} → {}, context empty: {})",
+                                        mem.terms.len(),
+                                        result.terms.len(),
+                                        result.context_markdown.trim().is_empty()
+                                    );
                                 } else {
                                     let old_terms = std::mem::take(&mut mem.terms);
                                     let old_context = std::mem::take(&mut mem.context);
