@@ -4,6 +4,8 @@ Whisper による高精度な音声認識 + AI による後処理で、コンテ
 
 AI-powered voice input for Linux — the tool that's been missing.
 
+![Settings UI](assets/screenshots/settings.png)
+
 ## 特徴
 
 - **音声認識**: whisper.cpp（ローカル）/ OpenAI Whisper API（クラウド）切替可能
