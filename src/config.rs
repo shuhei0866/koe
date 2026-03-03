@@ -121,6 +121,8 @@ pub struct MemoryConfig {
     pub enabled: bool,
     #[serde(default = "default_memory_dir")]
     pub dir: String,
+    #[serde(default = "default_consolidation_threshold")]
+    pub consolidation_threshold: usize,
 }
 
 impl Default for MemoryConfig {
@@ -128,6 +130,7 @@ impl Default for MemoryConfig {
         Self {
             enabled: default_memory_enabled(),
             dir: default_memory_dir(),
+            consolidation_threshold: default_consolidation_threshold(),
         }
     }
 }
@@ -164,6 +167,9 @@ fn default_memory_enabled() -> bool {
 }
 fn default_memory_dir() -> String {
     "~/.local/share/koe/memory".to_string()
+}
+fn default_consolidation_threshold() -> usize {
+    50
 }
 
 /// Expand ~ and environment variables in a path string.
@@ -367,6 +373,7 @@ mod tests {
         assert_eq!(loaded.ai.claude.unwrap().model, "claude-sonnet-4-6");
         assert_eq!(loaded.recognition.engine, RecognitionEngine::WhisperLocal);
         assert_eq!(loaded.hotkey.mode, HotkeyMode::PushToTalk);
+        assert_eq!(loaded.memory.consolidation_threshold, default_consolidation_threshold());
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&dir);
