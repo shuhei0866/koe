@@ -16,10 +16,14 @@ pub async fn start() -> Result<mpsc::Receiver<IpcRequest>> {
             Ok(_) => {
                 anyhow::bail!("koe daemon is already running (socket {} is active)", sock_path.display());
             }
-            Err(_) => {
-                // Socket is stale — remove and continue
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                // Socket is stale (no listener) — remove and continue
                 std::fs::remove_file(&sock_path)
                     .with_context(|| format!("removing stale socket {}", sock_path.display()))?;
+            }
+            Err(e) => {
+                // Unexpected error (permission denied, etc.) — do not remove, propagate
+                anyhow::bail!("cannot check existing socket {}: {}", sock_path.display(), e);
             }
         }
     }
