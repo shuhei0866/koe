@@ -61,7 +61,7 @@ impl Memory {
         if context_path.exists() {
             let content = std::fs::read_to_string(&context_path)
                 .with_context(|| format!("reading {}", context_path.display()))?;
-            memory.context = Self::parse_context_md(&content);
+            memory.context = Self::parse_context_markdown(&content);
         }
 
         Ok(memory)
@@ -161,8 +161,8 @@ impl Memory {
         parts.join("\n\n")
     }
 
-    /// Parse context.md content into MemoryContext.
-    fn parse_context_md(content: &str) -> MemoryContext {
+    /// Parse context markdown content into MemoryContext.
+    pub fn parse_context_markdown(content: &str) -> MemoryContext {
         let mut sections: HashMap<String, Vec<String>> = HashMap::new();
         let mut current_category: Option<String> = None;
 

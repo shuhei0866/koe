@@ -70,6 +70,13 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
     #[cfg(feature = "gui")]
     crate::ui::tray::start_tray();
 
+    // Set initial Whisper hint from memory
+    if config.memory.enabled && !mem.terms.is_empty() {
+        let hint = mem.format_for_whisper_hint();
+        recognizer.set_prompt_hint(&hint);
+        tracing::info!("Whisper hint set: {} terms", mem.terms.len());
+    }
+
     tracing::info!(
         "Ready! Press {} to start/stop recording (mode: {:?})",
         config.hotkey.key,
@@ -239,6 +246,11 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
                                                 if let Err(e) = mem.save() {
                                                     tracing::error!("Failed to save memory: {}", e);
                                                 }
+
+                                                // Update Whisper hint with new terms
+                                                let hint = mem.format_for_whisper_hint();
+                                                recognizer.set_prompt_hint(&hint);
+                                                tracing::debug!("Whisper hint updated: {} terms", mem.terms.len());
                                             }
 
                                             state = AppState::Typing;
@@ -285,6 +297,43 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
 
                     state = AppState::Idle;
                     tracing::info!("Ready for next input");
+
+                    // Check if memory needs consolidation
+                    if config.memory.enabled
+                        && mem.needs_consolidation(config.memory.consolidation_threshold)
+                    {
+                        tracing::info!(
+                            "Memory has {} entries (threshold: {}), starting consolidation...",
+                            mem.total_entries(),
+                            config.memory.consolidation_threshold
+                        );
+                        match processor.consolidate_memory(&mem.format_for_prompt()).await {
+                            Ok(Some(result)) => {
+                                let old_count = mem.total_entries();
+                                // Rebuild memory from consolidation result
+                                mem.terms = result.terms;
+                                mem.context = memory::Memory::parse_context_markdown(&result.context_markdown);
+                                if let Err(e) = mem.save() {
+                                    tracing::error!("Failed to save consolidated memory: {}", e);
+                                } else {
+                                    tracing::info!(
+                                        "Memory consolidated: {} → {} entries",
+                                        old_count,
+                                        mem.total_entries()
+                                    );
+                                }
+                                // Update Whisper hint after consolidation
+                                let hint = mem.format_for_whisper_hint();
+                                recognizer.set_prompt_hint(&hint);
+                            }
+                            Ok(None) => {
+                                tracing::debug!("Consolidation skipped (processor returned None)");
+                            }
+                            Err(e) => {
+                                tracing::error!("Memory consolidation failed: {}", e);
+                            }
+                        }
+                    }
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
