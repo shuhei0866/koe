@@ -11,6 +11,7 @@ pub struct OpenAiRecognizer {
     api_key: String,
     language: String,
     client: reqwest::Client,
+    prompt_hint: String,
 }
 
 impl OpenAiRecognizer {
@@ -21,12 +22,17 @@ impl OpenAiRecognizer {
             api_key,
             language: config.language.clone(),
             client: reqwest::Client::new(),
+            prompt_hint: String::new(),
         })
     }
 }
 
 #[async_trait]
 impl SpeechRecognizer for OpenAiRecognizer {
+    fn set_prompt_hint(&mut self, hint: &str) {
+        self.prompt_hint = hint.to_string();
+    }
+
     async fn transcribe(&self, audio: &AudioData) -> Result<String> {
         let wav_bytes = audio.to_wav_bytes().context("encoding audio as WAV")?;
 
@@ -34,11 +40,16 @@ impl SpeechRecognizer for OpenAiRecognizer {
             .file_name("audio.wav")
             .mime_str("audio/wav")?;
 
-        let form = multipart::Form::new()
+        let mut form = multipart::Form::new()
             .text("model", "whisper-1")
             .text("language", self.language.clone())
             .text("response_format", "text")
             .part("file", file_part);
+
+        // Add prompt hint if available
+        if !self.prompt_hint.is_empty() {
+            form = form.text("prompt", self.prompt_hint.clone());
+        }
 
         let response = self
             .client
