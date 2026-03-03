@@ -6,7 +6,7 @@ use crate::config::OllamaConfig;
 use crate::context::WindowContext;
 use crate::dictionary::Dictionary;
 
-use super::{build_system_prompt, TextProcessor};
+use super::{build_system_prompt, ProcessResult, TextProcessor};
 
 pub struct OllamaProcessor {
     host: String,
@@ -31,8 +31,9 @@ impl TextProcessor for OllamaProcessor {
         raw_text: &str,
         context: &WindowContext,
         dictionary: &Dictionary,
-    ) -> Result<String> {
-        let system_prompt = build_system_prompt(context, dictionary);
+        memory_context: &str,
+    ) -> Result<ProcessResult> {
+        let system_prompt = build_system_prompt(context, dictionary, memory_context);
         let user_prompt = format!("Clean up this speech-to-text output:\n\n{}", raw_text);
 
         let body = json!({
@@ -67,6 +68,9 @@ impl TextProcessor for OllamaProcessor {
             .to_string();
 
         tracing::info!("Ollama processed: {}", text);
-        Ok(text)
+        Ok(ProcessResult {
+            text,
+            learnings: vec![],
+        })
     }
 }
