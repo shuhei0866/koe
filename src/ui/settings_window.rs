@@ -9,6 +9,27 @@ use crate::config::{
     WhisperLocalConfig,
 };
 
+/// Known Claude models shown in the dropdown.
+const CLAUDE_MODELS: &[&str] = &[
+    "claude-sonnet-4-6",
+    "claude-opus-4-6",
+    "claude-haiku-4-5",
+];
+
+/// Read the selected model from a ComboRow + custom EntryRow pair.
+/// If the selected item is "Other", returns the custom entry text.
+fn read_model_selection(combo: &libadwaita::ComboRow, custom: &libadwaita::EntryRow) -> String {
+    if let Some(item) = combo.selected_item() {
+        if let Some(obj) = item.downcast_ref::<gtk4::StringObject>() {
+            let val = obj.string();
+            if val != "Other" {
+                return val.to_string();
+            }
+        }
+    }
+    custom.text().to_string()
+}
+
 /// All widget handles needed to read settings on save.
 struct Widgets {
     hotkey_mode: libadwaita::ComboRow,
@@ -20,9 +41,11 @@ struct Widgets {
     openai_lang: libadwaita::EntryRow,
     ai_engine: libadwaita::ComboRow,
     claude_key_env: libadwaita::EntryRow,
-    claude_model: libadwaita::EntryRow,
+    claude_model_combo: libadwaita::ComboRow,
+    claude_model_custom: libadwaita::EntryRow,
     ollama_host: libadwaita::EntryRow,
-    ollama_model: libadwaita::EntryRow,
+    ollama_model_combo: libadwaita::ComboRow,
+    ollama_model_custom: libadwaita::EntryRow,
 }
 
 impl Widgets {
@@ -60,11 +83,11 @@ impl Widgets {
                 engine: ai_engine,
                 claude: Some(ClaudeConfig {
                     api_key_env: self.claude_key_env.text().to_string(),
-                    model: self.claude_model.text().to_string(),
+                    model: read_model_selection(&self.claude_model_combo, &self.claude_model_custom),
                 }),
                 ollama: Some(OllamaConfig {
                     host: self.ollama_host.text().to_string(),
-                    model: self.ollama_model.text().to_string(),
+                    model: read_model_selection(&self.ollama_model_combo, &self.ollama_model_custom),
                 }),
             },
             input: InputConfig {
@@ -90,8 +113,16 @@ pub fn build(app: &libadwaita::Application) {
     let (general_page, hotkey_mode, hotkey_key) = build_general_page(&config);
     let (rec_page, rec_engine, whisper_model_path, whisper_lang, openai_key_env, openai_lang) =
         build_recognition_page(&config);
-    let (ai_page, ai_engine, claude_key_env, claude_model, ollama_host, ollama_model) =
-        build_ai_page(&config, &window);
+    let (
+        ai_page,
+        ai_engine,
+        claude_key_env,
+        claude_model_combo,
+        claude_model_custom,
+        ollama_host,
+        ollama_model_combo,
+        ollama_model_custom,
+    ) = build_ai_page(&config, &window);
 
     window.add(&general_page);
     window.add(&rec_page);
@@ -108,9 +139,11 @@ pub fn build(app: &libadwaita::Application) {
         openai_lang,
         ai_engine,
         claude_key_env,
-        claude_model,
+        claude_model_combo,
+        claude_model_custom,
         ollama_host,
-        ollama_model,
+        ollama_model_combo,
+        ollama_model_custom,
     });
 
     // Save on window close
@@ -362,8 +395,10 @@ fn build_ai_page(
     libadwaita::PreferencesPage,
     libadwaita::ComboRow,
     libadwaita::EntryRow,
+    libadwaita::ComboRow,
     libadwaita::EntryRow,
     libadwaita::EntryRow,
+    libadwaita::ComboRow,
     libadwaita::EntryRow,
 ) {
     let page = libadwaita::PreferencesPage::builder()
@@ -388,7 +423,8 @@ fn build_ai_page(
     engine_group.add(&engine_row);
     page.add(&engine_group);
 
-    // Claude settings
+    // ── Claude settings ──
+
     let claude_group = libadwaita::PreferencesGroup::builder()
         .title("Claude")
         .build();
@@ -402,13 +438,40 @@ fn build_ai_page(
         .title("API key env variable")
         .text(&cc.api_key_env)
         .build();
-    let claude_model_row = libadwaita::EntryRow::builder()
+
+    // Model dropdown: known models + "Other"
+    let is_known_claude = CLAUDE_MODELS.contains(&cc.model.as_str());
+    let mut claude_items: Vec<&str> = CLAUDE_MODELS.to_vec();
+    claude_items.push("Other");
+    let claude_model_list = gtk4::StringList::new(&claude_items);
+
+    let claude_model_combo = libadwaita::ComboRow::builder()
         .title("Model")
-        .text(&cc.model)
+        .model(&claude_model_list)
         .build();
 
+    if is_known_claude {
+        let idx = CLAUDE_MODELS.iter().position(|&m| m == cc.model).unwrap_or(0);
+        claude_model_combo.set_selected(idx as u32);
+    } else {
+        claude_model_combo.set_selected(CLAUDE_MODELS.len() as u32); // "Other"
+    }
+
+    let claude_model_custom = libadwaita::EntryRow::builder()
+        .title("Custom model name")
+        .text(if is_known_claude { "" } else { &cc.model })
+        .build();
+    claude_model_custom.set_visible(!is_known_claude);
+
+    let custom_vis = claude_model_custom.clone();
+    let other_idx = CLAUDE_MODELS.len() as u32;
+    claude_model_combo.connect_selected_notify(move |combo| {
+        custom_vis.set_visible(combo.selected() == other_idx);
+    });
+
     claude_group.add(&claude_key_row);
-    claude_group.add(&claude_model_row);
+    claude_group.add(&claude_model_combo);
+    claude_group.add(&claude_model_custom);
 
     // Test Connection button for Claude
     let test_claude_row = libadwaita::ActionRow::builder()
@@ -420,11 +483,12 @@ fn build_ai_page(
     test_claude_row.add_suffix(&test_icon);
 
     let window_for_claude_test = window.clone();
-    let claude_key_row_for_test = claude_key_row.clone();
-    let claude_model_row_for_test = claude_model_row.clone();
+    let claude_key_for_test = claude_key_row.clone();
+    let claude_combo_for_test = claude_model_combo.clone();
+    let claude_custom_for_test = claude_model_custom.clone();
     test_claude_row.connect_activated(move |row| {
-        let api_key_env = claude_key_row_for_test.text().to_string();
-        let model = claude_model_row_for_test.text().to_string();
+        let api_key_env = claude_key_for_test.text().to_string();
+        let model = read_model_selection(&claude_combo_for_test, &claude_custom_for_test);
 
         row.set_subtitle("Testing...");
         let row_clone = row.clone();
@@ -457,7 +521,8 @@ fn build_ai_page(
     claude_group.add(&test_claude_row);
     page.add(&claude_group);
 
-    // Ollama settings
+    // ── Ollama settings ──
+
     let ollama_group = libadwaita::PreferencesGroup::builder()
         .title("Ollama")
         .build();
@@ -471,10 +536,65 @@ fn build_ai_page(
         .title("Host URL")
         .text(&ol.host)
         .build();
-    let ollama_model_row = libadwaita::EntryRow::builder()
+
+    // Model dropdown: start with current model + "Other", fetch list in background
+    let ollama_model_list = gtk4::StringList::new(&[ol.model.as_str(), "Other"]);
+    let ollama_model_combo = libadwaita::ComboRow::builder()
         .title("Model")
-        .text(&ol.model)
+        .model(&ollama_model_list)
         .build();
+    ollama_model_combo.set_selected(0);
+
+    let ollama_model_custom = libadwaita::EntryRow::builder()
+        .title("Custom model name")
+        .build();
+    ollama_model_custom.set_visible(false);
+
+    let custom_vis = ollama_model_custom.clone();
+    ollama_model_combo.connect_selected_notify(move |combo| {
+        let is_other = combo
+            .selected_item()
+            .and_then(|item| item.downcast_ref::<gtk4::StringObject>().map(|s| s.string()))
+            .map_or(false, |s| s == "Other");
+        custom_vis.set_visible(is_other);
+    });
+
+    // Fetch installed Ollama models in the background
+    {
+        let host = ol.host.clone();
+        let current_model = ol.model.clone();
+        let list = ollama_model_list.clone();
+        let combo = ollama_model_combo.clone();
+
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<String>>();
+        std::thread::spawn(move || {
+            if let Ok(models) = fetch_ollama_models(&host) {
+                let _ = tx.send(models);
+            }
+        });
+
+        gtk4::glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+            match rx.try_recv() {
+                Ok(models) => {
+                    while list.n_items() > 0 {
+                        list.remove(0);
+                    }
+                    for m in &models {
+                        list.append(m);
+                    }
+                    list.append("Other");
+                    if let Some(idx) = models.iter().position(|m| *m == current_model) {
+                        combo.set_selected(idx as u32);
+                    } else {
+                        combo.set_selected(models.len() as u32); // "Other"
+                    }
+                    gtk4::glib::ControlFlow::Break
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => gtk4::glib::ControlFlow::Continue,
+                Err(_) => gtk4::glib::ControlFlow::Break,
+            }
+        });
+    }
 
     // Test Connection button for Ollama
     let test_ollama_row = libadwaita::ActionRow::builder()
@@ -486,11 +606,12 @@ fn build_ai_page(
     test_ollama_row.add_suffix(&test_icon);
 
     let window_for_ollama_test = window.clone();
-    let ollama_host_row_for_test = ollama_host_row.clone();
-    let ollama_model_row_for_test = ollama_model_row.clone();
+    let ollama_host_for_test = ollama_host_row.clone();
+    let ollama_combo_for_test = ollama_model_combo.clone();
+    let ollama_custom_for_test = ollama_model_custom.clone();
     test_ollama_row.connect_activated(move |row| {
-        let host = ollama_host_row_for_test.text().to_string();
-        let model = ollama_model_row_for_test.text().to_string();
+        let host = ollama_host_for_test.text().to_string();
+        let model = read_model_selection(&ollama_combo_for_test, &ollama_custom_for_test);
 
         row.set_subtitle("Testing...");
         let row_clone = row.clone();
@@ -521,7 +642,8 @@ fn build_ai_page(
     });
 
     ollama_group.add(&ollama_host_row);
-    ollama_group.add(&ollama_model_row);
+    ollama_group.add(&ollama_model_combo);
+    ollama_group.add(&ollama_model_custom);
     ollama_group.add(&test_ollama_row);
     page.add(&ollama_group);
 
@@ -538,7 +660,16 @@ fn build_ai_page(
         update_visibility(row.selected());
     });
 
-    (page, engine_row, claude_key_row, claude_model_row, ollama_host_row, ollama_model_row)
+    (
+        page,
+        engine_row,
+        claude_key_row,
+        claude_model_combo,
+        claude_model_custom,
+        ollama_host_row,
+        ollama_model_combo,
+        ollama_model_custom,
+    )
 }
 
 // ─── API Test Functions ─────────────────────────────────────────────────────
@@ -588,6 +719,30 @@ fn test_ollama_api(host: &str, model: &str) -> Result<String, String> {
         .unwrap_or("(no response)");
 
     Ok(truncate(text, 60).to_string())
+}
+
+fn fetch_ollama_models(host: &str) -> Result<Vec<String>, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let url = format!("{}/api/tags", host.trim_end_matches('/'));
+    let resp: serde_json::Value = client
+        .get(&url)
+        .send()
+        .map_err(|e| e.to_string())?
+        .json()
+        .map_err(|e| e.to_string())?;
+
+    Ok(resp["models"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m["name"].as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 /// Show an error toast with a "Copy" button that copies the full error to clipboard.
