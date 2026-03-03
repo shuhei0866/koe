@@ -71,7 +71,6 @@ impl SpeechRecognizer for WhisperLocalRecognizer {
             params.set_print_realtime(false);
             params.set_print_timestamps(false);
             params.set_suppress_blank(true);
-            params.set_suppress_non_speech_tokens(true);
 
             if !prompt_hint.is_empty() {
                 params.set_initial_prompt(&prompt_hint);
@@ -79,13 +78,15 @@ impl SpeechRecognizer for WhisperLocalRecognizer {
 
             state
                 .full(params, &samples)
-                .context("whisper transcription failed")?;
+                .map_err(|e| anyhow::anyhow!("whisper transcription failed: {}", e))?;
 
-            let num_segments = state.full_n_segments().context("getting segment count")?;
+            let num_segments = state.full_n_segments();
             let mut text = String::new();
             for i in 0..num_segments {
-                if let Ok(segment) = state.full_get_segment_text(i) {
-                    text.push_str(&segment);
+                if let Some(segment) = state.get_segment(i) {
+                    if let Ok(s) = segment.to_str() {
+                        text.push_str(s);
+                    }
                 }
             }
 
