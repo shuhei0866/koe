@@ -1,4 +1,4 @@
-use zbus::{connection, interface, Connection, SignalContext};
+use zbus::{connection, interface, object_server::SignalEmitter, Connection};
 
 /// D-Bus interface for koe daemon state notifications.
 ///
@@ -10,11 +10,11 @@ struct KoeDaemon;
 impl KoeDaemon {
     /// Emitted when the daemon state changes (Idle, Recording, Processing, Typing).
     #[zbus(signal)]
-    async fn state_changed(signal_ctxt: &SignalContext<'_>, state: &str) -> zbus::Result<()>;
+    async fn state_changed(emitter: &SignalEmitter<'_>, state: &str) -> zbus::Result<()>;
 
     /// Emitted with the current audio RMS level during recording (~30fps).
     #[zbus(signal)]
-    async fn audio_level(signal_ctxt: &SignalContext<'_>, level: f64) -> zbus::Result<()>;
+    async fn audio_level(emitter: &SignalEmitter<'_>, level: f64) -> zbus::Result<()>;
 }
 
 /// Emitter handle for sending D-Bus signals from the daemon.
@@ -40,7 +40,7 @@ impl DbusEmitter {
             .interface::<_, KoeDaemon>("/com/github/koe/Daemon")
             .await
         {
-            let ctxt = iface_ref.signal_context();
+            let ctxt = iface_ref.signal_emitter();
             let _ = KoeDaemon::state_changed(ctxt, state).await;
         }
     }
@@ -52,7 +52,7 @@ impl DbusEmitter {
             .interface::<_, KoeDaemon>("/com/github/koe/Daemon")
             .await
         {
-            let ctxt = iface_ref.signal_context();
+            let ctxt = iface_ref.signal_emitter();
             let _ = KoeDaemon::audio_level(ctxt, level).await;
         }
     }

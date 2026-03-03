@@ -95,6 +95,7 @@ impl Widgets {
             },
             dictionaries: DictionaryConfig { paths: vec![] },
             memory: Default::default(),
+            feedback: Default::default(),
         }
     }
 }
@@ -216,6 +217,7 @@ fn default_config() -> Config {
         },
         dictionaries: DictionaryConfig { paths: vec![] },
         memory: Default::default(),
+        feedback: Default::default(),
     }
 }
 
