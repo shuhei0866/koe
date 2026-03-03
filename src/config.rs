@@ -11,6 +11,8 @@ pub struct Config {
     pub input: InputConfig,
     #[serde(default)]
     pub dictionaries: DictionaryConfig,
+    #[serde(default)]
+    pub memory: MemoryConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -113,6 +115,26 @@ impl Default for DictionaryConfig {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MemoryConfig {
+    #[serde(default = "default_memory_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_memory_dir")]
+    pub dir: String,
+    #[serde(default = "default_consolidation_threshold")]
+    pub consolidation_threshold: usize,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_memory_enabled(),
+            dir: default_memory_dir(),
+            consolidation_threshold: default_consolidation_threshold(),
+        }
+    }
+}
+
 fn default_language() -> String {
     "ja".to_string()
 }
@@ -139,6 +161,15 @@ fn default_hotkey_key() -> String {
 }
 fn default_input_method() -> String {
     "direct_type".to_string()
+}
+fn default_memory_enabled() -> bool {
+    true
+}
+fn default_memory_dir() -> String {
+    "~/.local/share/koe/memory".to_string()
+}
+fn default_consolidation_threshold() -> usize {
+    50
 }
 
 /// Expand ~ and environment variables in a path string.
@@ -253,6 +284,11 @@ impl Config {
             .map(|w| expand_path(&w.model_path))
     }
 
+    /// Resolve the memory directory path (expand ~).
+    pub fn memory_dir(&self) -> PathBuf {
+        expand_path(&self.memory.dir)
+    }
+
     /// Resolve dictionary paths (expand ~).
     pub fn dictionary_paths(&self) -> Vec<PathBuf> {
         self.dictionaries
@@ -322,6 +358,7 @@ mod tests {
                 method: "direct_type".to_string(),
             },
             dictionaries: DictionaryConfig { paths: vec![] },
+            memory: MemoryConfig::default(),
         };
 
         // Save to temp file
@@ -336,6 +373,7 @@ mod tests {
         assert_eq!(loaded.ai.claude.unwrap().model, "claude-sonnet-4-6");
         assert_eq!(loaded.recognition.engine, RecognitionEngine::WhisperLocal);
         assert_eq!(loaded.hotkey.mode, HotkeyMode::PushToTalk);
+        assert_eq!(loaded.memory.consolidation_threshold, default_consolidation_threshold());
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&dir);

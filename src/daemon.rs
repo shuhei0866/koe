@@ -3,7 +3,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use crate::ipc;
-use crate::{ai, audio, config, context, dictionary, hotkey, input, recognition};
+use crate::{ai, audio, config, context, dictionary, hotkey, input, memory, recognition};
 
 /// Application state machine.
 #[derive(Debug, Clone, PartialEq)]
@@ -25,7 +25,20 @@ impl std::fmt::Display for AppState {
     }
 }
 
-pub async fn run_daemon(config: config::Config) -> Result<()> {
+pub async fn run_daemon(mut config: config::Config) -> Result<()> {
+    // Load memory (auto-learned data)
+    let memory_dir = config.memory_dir();
+    let mut mem = if config.memory.enabled {
+        memory::Memory::load(&memory_dir).context("loading memory")?
+    } else {
+        memory::Memory::default()
+    };
+    tracing::info!(
+        "Memory loaded: {} terms, {} context sections",
+        mem.terms.len(),
+        mem.context.sections.len()
+    );
+
     // Load dictionaries
     let dict_paths = config.dictionary_paths();
     let mut dictionary =
@@ -57,6 +70,13 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
     #[cfg(feature = "gui")]
     crate::ui::tray::start_tray();
 
+    // Set initial Whisper hint from memory
+    if config.memory.enabled && !mem.terms.is_empty() {
+        let hint = mem.format_for_whisper_hint();
+        recognizer.set_prompt_hint(&hint);
+        tracing::info!("Whisper hint set: {} terms", mem.terms.len());
+    }
+
     tracing::info!(
         "Ready! Press {} to start/stop recording (mode: {:?})",
         config.hotkey.key,
@@ -64,6 +84,7 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
     );
 
     let mut state = AppState::Idle;
+    let mut last_consolidation_entry_count: usize = 0;
 
     // Main event loop
     loop {
@@ -122,6 +143,28 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
                                 }
                             }
 
+                            // Reload memory
+                            if new_config.memory.enabled {
+                                let new_memory_dir = new_config.memory_dir();
+                                match memory::Memory::load(&new_memory_dir) {
+                                    Ok(new_mem) => {
+                                        mem = new_mem;
+                                        tracing::info!("Memory reloaded");
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to reload memory: {}", e);
+                                    }
+                                }
+                            }
+
+                            // Re-apply Whisper hint after reload
+                            if new_config.memory.enabled && !mem.terms.is_empty() {
+                                let hint = mem.format_for_whisper_hint();
+                                recognizer.set_prompt_hint(&hint);
+                                tracing::info!("Whisper hint restored: {} terms", mem.terms.len());
+                            }
+
+                            config = new_config;
                             tracing::info!("Config reloaded successfully");
                         }
                         Err(e) => {
@@ -183,26 +226,53 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
                                     let corrected = dictionary.apply_terms(&raw_text);
 
                                     // AI post-processing
+                                    let memory_context = mem.format_for_prompt();
                                     match processor
-                                        .process(&corrected, &window_ctx, &dictionary)
+                                        .process(&corrected, &window_ctx, &dictionary, &memory_context)
                                         .await
                                     {
-                                        Ok(processed_text) => {
+                                        Ok(result) => {
                                             tracing::info!(
-                                                "Processed text: {}",
-                                                processed_text
+                                                "Processed text: {} (learnings: {})",
+                                                result.text,
+                                                result.learnings.len()
                                             );
+
+                                            // Save learnings to memory (only when memory is enabled)
+                                            if config.memory.enabled && !result.learnings.is_empty() {
+                                                for learning in &result.learnings {
+                                                    match learning {
+                                                        ai::Learning::Term { from, to } => {
+                                                            tracing::info!("Learned term: {} → {}", from, to);
+                                                            mem.add_term(from, to);
+                                                        }
+                                                        ai::Learning::Context { category, content } => {
+                                                            tracing::info!("Learned context [{}]: {}", category, content);
+                                                            mem.add_context(category, content);
+                                                        }
+                                                    }
+                                                }
+                                                if let Err(e) = mem.save() {
+                                                    tracing::error!("Failed to save memory: {}", e);
+                                                }
+
+                                                // Update Whisper hint with new terms
+                                                let hint = mem.format_for_whisper_hint();
+                                                recognizer.set_prompt_hint(&hint);
+                                                tracing::debug!("Whisper hint updated: {} terms", mem.terms.len());
+                                            }
+
                                             state = AppState::Typing;
 
                                             if let Err(e) =
-                                                input::paste_text(&processed_text)
+                                                input::paste_text(&result.text)
                                             {
                                                 tracing::error!(
                                                     "Failed to paste text: {}",
                                                     e
                                                 );
                                                 if let Err(e2) =
-                                                    input::type_text(&processed_text)
+                                                    input::type_text(&result.text)
                                                 {
                                                     tracing::error!(
                                                         "Direct type also failed: {}",
@@ -236,6 +306,62 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
 
                     state = AppState::Idle;
                     tracing::info!("Ready for next input");
+
+                    // Check if memory needs consolidation
+                    // Only trigger if entries grew since last consolidation
+                    let current_entries = mem.total_entries();
+                    if config.memory.enabled
+                        && mem.needs_consolidation(config.memory.consolidation_threshold)
+                        && current_entries > last_consolidation_entry_count
+                    {
+                        tracing::info!(
+                            "Memory has {} entries (threshold: {}), starting consolidation...",
+                            current_entries,
+                            config.memory.consolidation_threshold
+                        );
+                        match processor.consolidate_memory(&mem.format_for_prompt()).await {
+                            Ok(Some(result)) => {
+                                // Guard: reject consolidation results that would lose data
+                                let would_lose_terms = result.terms.is_empty() && !mem.terms.is_empty();
+                                if (result.terms.is_empty() && result.context_markdown.trim().is_empty())
+                                    || would_lose_terms
+                                {
+                                    tracing::warn!(
+                                        "Consolidation result rejected (terms: {} → {}, context empty: {})",
+                                        mem.terms.len(),
+                                        result.terms.len(),
+                                        result.context_markdown.trim().is_empty()
+                                    );
+                                } else {
+                                    let old_terms = std::mem::take(&mut mem.terms);
+                                    let old_context = std::mem::take(&mut mem.context);
+                                    mem.terms = result.terms;
+                                    mem.context = memory::Memory::parse_context_markdown(&result.context_markdown);
+                                    if let Err(e) = mem.save() {
+                                        tracing::error!("Failed to save consolidated memory, rolling back: {}", e);
+                                        mem.terms = old_terms;
+                                        mem.context = old_context;
+                                    } else {
+                                        tracing::info!(
+                                            "Memory consolidated: {} → {} entries",
+                                            current_entries,
+                                            mem.total_entries()
+                                        );
+                                    }
+                                    // Update Whisper hint after consolidation
+                                    let hint = mem.format_for_whisper_hint();
+                                    recognizer.set_prompt_hint(&hint);
+                                }
+                                last_consolidation_entry_count = mem.total_entries();
+                            }
+                            Ok(None) => {
+                                tracing::debug!("Consolidation skipped (processor returned None)");
+                            }
+                            Err(e) => {
+                                tracing::error!("Memory consolidation failed: {}", e);
+                            }
+                        }
+                    }
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
