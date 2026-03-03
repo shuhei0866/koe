@@ -1,7 +1,9 @@
 use ksni::menu::StandardItem;
-use ksni::{Tray, TrayMethods};
+use ksni::{Handle, Tray, TrayMethods};
 
-struct KoeTray;
+pub struct KoeTray {
+    pub current_icon: String,
+}
 
 impl Tray for KoeTray {
     fn id(&self) -> String {
@@ -9,7 +11,7 @@ impl Tray for KoeTray {
     }
 
     fn icon_name(&self) -> String {
-        "audio-input-microphone".to_string()
+        self.current_icon.clone()
     }
 
     fn title(&self) -> String {
@@ -50,16 +52,93 @@ impl Tray for KoeTray {
     }
 }
 
-/// Start the system tray icon (async, runs in a tokio task).
-pub fn start_tray() {
-    tokio::spawn(async {
-        match KoeTray.spawn().await {
-            Ok(_handle) => {
-                tracing::info!("System tray started");
-            }
-            Err(e) => {
-                tracing::error!("Failed to start system tray: {}", e);
-            }
-        }
-    });
+/// Map AppState string to system icon name.
+pub fn icon_for_state(state: &str) -> &'static str {
+    match state {
+        "Idle" => "audio-input-microphone",
+        "Recording" => "media-record",
+        "Processing" => "emblem-synchronizing",
+        "Typing" => "input-keyboard",
+        _ => "audio-input-microphone",
+    }
+}
+
+/// Update the tray icon to reflect the current state.
+pub async fn update_tray_icon(handle: &Handle<KoeTray>, state: &str) {
+    let icon = icon_for_state(state).to_string();
+    handle
+        .update(|tray| {
+            tray.current_icon = icon;
+        })
+        .await;
+}
+
+/// Start the system tray icon and return the handle for dynamic updates.
+pub async fn start_tray() -> Result<Handle<KoeTray>, ksni::Error> {
+    let tray = KoeTray {
+        current_icon: "audio-input-microphone".to_string(),
+    };
+    let handle = tray.spawn().await?;
+    tracing::info!("System tray started");
+    Ok(handle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_icon_for_state() {
+        assert_eq!(icon_for_state("Idle"), "audio-input-microphone");
+        assert_eq!(icon_for_state("Recording"), "media-record");
+        assert_eq!(icon_for_state("Processing"), "emblem-synchronizing");
+        assert_eq!(icon_for_state("Typing"), "input-keyboard");
+        assert_eq!(icon_for_state("unknown"), "audio-input-microphone");
+    }
+
+    #[test]
+    fn test_icon_for_state_empty_string() {
+        assert_eq!(icon_for_state(""), "audio-input-microphone");
+    }
+
+    #[test]
+    fn test_koe_tray_initial_icon() {
+        let tray = KoeTray {
+            current_icon: "audio-input-microphone".to_string(),
+        };
+        assert_eq!(tray.icon_name(), "audio-input-microphone");
+    }
+
+    #[test]
+    fn test_koe_tray_custom_icon() {
+        let tray = KoeTray {
+            current_icon: "media-record".to_string(),
+        };
+        assert_eq!(tray.icon_name(), "media-record");
+    }
+
+    #[test]
+    fn test_koe_tray_id() {
+        let tray = KoeTray {
+            current_icon: String::new(),
+        };
+        assert_eq!(tray.id(), "koe");
+    }
+
+    #[test]
+    fn test_koe_tray_title() {
+        let tray = KoeTray {
+            current_icon: String::new(),
+        };
+        assert_eq!(tray.title(), "koe");
+    }
+
+    #[test]
+    fn test_koe_tray_tooltip() {
+        let tray = KoeTray {
+            current_icon: String::new(),
+        };
+        let tip = tray.tool_tip();
+        assert_eq!(tip.title, "koe - Voice Input");
+    }
 }
