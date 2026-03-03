@@ -189,15 +189,16 @@ impl AudioRecorder {
                 &config.into(),
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
                     let mut buf = buffer.lock().unwrap();
-                    // Convert to mono by averaging channels
-                    let mut mono_samples = Vec::with_capacity(data.len() / channels);
+                    // Convert to mono by averaging channels, compute RMS incrementally
+                    let mut sum_sq = 0.0f32;
+                    let mut count = 0usize;
                     for chunk in data.chunks(channels) {
                         let mono: f32 = chunk.iter().sum::<f32>() / channels as f32;
                         buf.push(mono);
-                        mono_samples.push(mono);
+                        sum_sq += mono * mono;
+                        count += 1;
                     }
-                    // Compute and send RMS level
-                    let rms = compute_rms(&mono_samples);
+                    let rms = if count > 0 { (sum_sq / count as f32).sqrt() } else { 0.0 };
                     let _ = rms_sender.send(rms);
                 },
                 err_fn,
@@ -210,16 +211,17 @@ impl AudioRecorder {
                     &config.into(),
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
                         let mut buf = buffer.lock().unwrap();
-                        let mut mono_samples = Vec::with_capacity(data.len() / channels);
+                        let mut sum_sq = 0.0f32;
+                        let mut count = 0usize;
                         for chunk in data.chunks(channels) {
                             let mono: f32 =
                                 chunk.iter().map(|&s| s as f32 / 32768.0).sum::<f32>()
                                     / channels as f32;
                             buf.push(mono);
-                            mono_samples.push(mono);
+                            sum_sq += mono * mono;
+                            count += 1;
                         }
-                        // Compute and send RMS level
-                        let rms = compute_rms(&mono_samples);
+                        let rms = if count > 0 { (sum_sq / count as f32).sqrt() } else { 0.0 };
                         let _ = rms_sender_i16.send(rms);
                     },
                     err_fn,
