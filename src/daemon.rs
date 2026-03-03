@@ -84,6 +84,7 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
     );
 
     let mut state = AppState::Idle;
+    let mut last_consolidation_entry_count: usize = 0;
 
     // Main event loop
     loop {
@@ -154,6 +155,13 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
                                         tracing::error!("Failed to reload memory: {}", e);
                                     }
                                 }
+                            }
+
+                            // Re-apply Whisper hint after reload
+                            if new_config.memory.enabled && !mem.terms.is_empty() {
+                                let hint = mem.format_for_whisper_hint();
+                                recognizer.set_prompt_hint(&hint);
+                                tracing::info!("Whisper hint restored: {} terms", mem.terms.len());
                             }
 
                             tracing::info!("Config reloaded successfully");
@@ -299,32 +307,43 @@ pub async fn run_daemon(config: config::Config) -> Result<()> {
                     tracing::info!("Ready for next input");
 
                     // Check if memory needs consolidation
+                    // Only trigger if entries grew since last consolidation
+                    let current_entries = mem.total_entries();
                     if config.memory.enabled
                         && mem.needs_consolidation(config.memory.consolidation_threshold)
+                        && current_entries > last_consolidation_entry_count
                     {
                         tracing::info!(
                             "Memory has {} entries (threshold: {}), starting consolidation...",
-                            mem.total_entries(),
+                            current_entries,
                             config.memory.consolidation_threshold
                         );
                         match processor.consolidate_memory(&mem.format_for_prompt()).await {
                             Ok(Some(result)) => {
-                                let old_count = mem.total_entries();
-                                // Rebuild memory from consolidation result
-                                mem.terms = result.terms;
-                                mem.context = memory::Memory::parse_context_markdown(&result.context_markdown);
-                                if let Err(e) = mem.save() {
-                                    tracing::error!("Failed to save consolidated memory: {}", e);
+                                // Guard: reject empty consolidation results
+                                if result.terms.is_empty() && result.context_markdown.trim().is_empty() {
+                                    tracing::warn!("Consolidation returned empty result, skipping to protect existing data");
                                 } else {
-                                    tracing::info!(
-                                        "Memory consolidated: {} → {} entries",
-                                        old_count,
-                                        mem.total_entries()
-                                    );
+                                    let old_terms = std::mem::take(&mut mem.terms);
+                                    let old_context = std::mem::take(&mut mem.context);
+                                    mem.terms = result.terms;
+                                    mem.context = memory::Memory::parse_context_markdown(&result.context_markdown);
+                                    if let Err(e) = mem.save() {
+                                        tracing::error!("Failed to save consolidated memory, rolling back: {}", e);
+                                        mem.terms = old_terms;
+                                        mem.context = old_context;
+                                    } else {
+                                        tracing::info!(
+                                            "Memory consolidated: {} → {} entries",
+                                            current_entries,
+                                            mem.total_entries()
+                                        );
+                                    }
+                                    // Update Whisper hint after consolidation
+                                    let hint = mem.format_for_whisper_hint();
+                                    recognizer.set_prompt_hint(&hint);
                                 }
-                                // Update Whisper hint after consolidation
-                                let hint = mem.format_for_whisper_hint();
-                                recognizer.set_prompt_hint(&hint);
+                                last_consolidation_entry_count = mem.total_entries();
                             }
                             Ok(None) => {
                                 tracing::debug!("Consolidation skipped (processor returned None)");
