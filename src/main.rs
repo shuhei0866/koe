@@ -7,6 +7,7 @@ mod context;
 mod daemon;
 mod dictionary;
 mod hotkey;
+mod memory;
 mod input;
 mod ipc;
 mod recognition;
