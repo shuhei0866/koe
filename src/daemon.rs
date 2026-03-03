@@ -25,6 +25,21 @@ impl std::fmt::Display for AppState {
     }
 }
 
+/// Notify D-Bus and tray icon of a state change.
+async fn notify_state_change(
+    state: &AppState,
+    dbus_emitter: &Option<dbus::DbusEmitter>,
+    #[cfg(feature = "gui")] tray_handle: &Option<ksni::Handle<crate::ui::tray::KoeTray>>,
+) {
+    if let Some(ref emitter) = dbus_emitter {
+        emitter.emit_state_changed(&state.to_string()).await;
+    }
+    #[cfg(feature = "gui")]
+    if let Some(ref handle) = tray_handle {
+        crate::ui::tray::update_tray_icon(handle, &state.to_string()).await;
+    }
+}
+
 pub async fn run_daemon(mut config: config::Config) -> Result<()> {
     // Load memory (auto-learned data)
     let memory_dir = config.memory_dir();
@@ -216,24 +231,11 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                     if let Err(e) = recorder.start() {
                         tracing::error!("Failed to start recording: {}", e);
                         state = AppState::Idle;
-                        // Notify: Recording failed, back to Idle
-                        if let Some(ref emitter) = dbus_emitter {
-                            emitter.emit_state_changed(&state.to_string()).await;
-                        }
-                        #[cfg(feature = "gui")]
-                        if let Some(ref handle) = tray_handle {
-                            crate::ui::tray::update_tray_icon(handle, &state.to_string()).await;
-                        }
+                        notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
                     } else {
                         // Recording started successfully
                         sound::play_if_enabled("message-new-instant", config.feedback.sound_enabled);
-                        if let Some(ref emitter) = dbus_emitter {
-                            emitter.emit_state_changed(&state.to_string()).await;
-                        }
-                        #[cfg(feature = "gui")]
-                        if let Some(ref handle) = tray_handle {
-                            crate::ui::tray::update_tray_icon(handle, &state.to_string()).await;
-                        }
+                        notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
                     }
                 }
             }
@@ -242,26 +244,14 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                     tracing::info!("<<< Recording stopped, processing...");
                     state = AppState::Processing;
                     sound::play_if_enabled("complete", config.feedback.sound_enabled);
-                    if let Some(ref emitter) = dbus_emitter {
-                        emitter.emit_state_changed(&state.to_string()).await;
-                    }
-                    #[cfg(feature = "gui")]
-                    if let Some(ref handle) = tray_handle {
-                        crate::ui::tray::update_tray_icon(handle, &state.to_string()).await;
-                    }
+                    notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
 
                     match recorder.stop() {
                         Ok(audio_data) => {
                             if audio_data.samples.is_empty() {
                                 tracing::warn!("No audio captured");
                                 state = AppState::Idle;
-                                if let Some(ref emitter) = dbus_emitter {
-                                    emitter.emit_state_changed(&state.to_string()).await;
-                                }
-                                #[cfg(feature = "gui")]
-                                if let Some(ref handle) = tray_handle {
-                                    crate::ui::tray::update_tray_icon(handle, &state.to_string()).await;
-                                }
+                                notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
                                 continue;
                             }
 
@@ -275,13 +265,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                     if raw_text.is_empty() {
                                         tracing::warn!("Empty transcription");
                                         state = AppState::Idle;
-                                        if let Some(ref emitter) = dbus_emitter {
-                                            emitter.emit_state_changed(&state.to_string()).await;
-                                        }
-                                        #[cfg(feature = "gui")]
-                                        if let Some(ref handle) = tray_handle {
-                                            crate::ui::tray::update_tray_icon(handle, &state.to_string()).await;
-                                        }
+                                        notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
                                         continue;
                                     }
 
@@ -328,13 +312,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                             }
 
                                             state = AppState::Typing;
-                                            if let Some(ref emitter) = dbus_emitter {
-                                                emitter.emit_state_changed(&state.to_string()).await;
-                                            }
-                                            #[cfg(feature = "gui")]
-                                            if let Some(ref handle) = tray_handle {
-                                                crate::ui::tray::update_tray_icon(handle, &state.to_string()).await;
-                                            }
+                                            notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
 
                                             if let Err(e) =
                                                 input::paste_text(&result.text)
@@ -362,13 +340,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                                 "Falling back to raw transcription"
                                             );
                                             state = AppState::Typing;
-                                            if let Some(ref emitter) = dbus_emitter {
-                                                emitter.emit_state_changed(&state.to_string()).await;
-                                            }
-                                            #[cfg(feature = "gui")]
-                                            if let Some(ref handle) = tray_handle {
-                                                crate::ui::tray::update_tray_icon(handle, &state.to_string()).await;
-                                            }
+                                            notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
                                             let _ = input::paste_text(&corrected);
                                         }
                                     }
@@ -384,13 +356,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                     }
 
                     state = AppState::Idle;
-                    if let Some(ref emitter) = dbus_emitter {
-                        emitter.emit_state_changed(&state.to_string()).await;
-                    }
-                    #[cfg(feature = "gui")]
-                    if let Some(ref handle) = tray_handle {
-                        crate::ui::tray::update_tray_icon(handle, &state.to_string()).await;
-                    }
+                    notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
                     tracing::info!("Ready for next input");
 
                     // Check if memory needs consolidation

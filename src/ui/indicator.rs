@@ -162,10 +162,10 @@ impl IndicatorWindow {
         glib::timeout_add_local(Duration::from_millis(FADEOUT_STEP_MS), move || {
             let mut s = state_for_timer.borrow_mut();
             if s.visible {
-                s.phase += 0.1;
+                s.phase = (s.phase + 0.1) % (std::f64::consts::PI * 20.0);
+                drop(s);
+                da_for_timer.queue_draw();
             }
-            drop(s);
-            da_for_timer.queue_draw();
             glib::ControlFlow::Continue
         });
 
@@ -213,7 +213,7 @@ impl IndicatorWindow {
             glib::timeout_add_local(Duration::from_millis(FADEOUT_STEP_MS), move || {
                 let mut s = state_fade.borrow_mut();
                 // If state changed away from Idle during fadeout, cancel
-                if s.current_state != "Idle" && s.current_state != "Done" {
+                if s.current_state != "Idle" {
                     return glib::ControlFlow::Break;
                 }
                 s.fadeout_opacity -= FADEOUT_DECREMENT;
