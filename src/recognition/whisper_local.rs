@@ -71,6 +71,7 @@ impl SpeechRecognizer for WhisperLocalRecognizer {
             params.set_print_realtime(false);
             params.set_print_timestamps(false);
             params.set_suppress_blank(true);
+            params.set_suppress_nst(true);
 
             if !prompt_hint.is_empty() {
                 params.set_initial_prompt(&prompt_hint);
