@@ -71,6 +71,7 @@ impl Widgets {
                 method: "direct_type".to_string(),
             },
             dictionaries: DictionaryConfig { paths: vec![] },
+            memory: Default::default(),
         }
     }
 }
@@ -181,6 +182,7 @@ fn default_config() -> Config {
             method: "direct_type".to_string(),
         },
         dictionaries: DictionaryConfig { paths: vec![] },
+        memory: Default::default(),
     }
 }
 
