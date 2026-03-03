@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "koe", about = "Ubuntu voice input system")]
+#[command(name = "koe", about = "Ubuntu voice input system", version)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
