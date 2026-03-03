@@ -5,9 +5,23 @@ use tokio::net::UnixListener;
 
 use super::{IpcRequest, IpcResponse};
 
+/// Remove the IPC socket file if it exists.
+pub fn cleanup_socket() {
+    let sock_path = super::socket_path();
+    if sock_path.exists() {
+        if let Err(e) = std::fs::remove_file(&sock_path) {
+            tracing::warn!("Failed to remove socket {}: {}", sock_path.display(), e);
+        } else {
+            tracing::info!("Removed socket {}", sock_path.display());
+        }
+    }
+}
+
 /// Start the IPC server on a Unix Domain Socket.
 /// Returns a channel receiver for incoming requests.
-pub async fn start() -> Result<mpsc::Receiver<IpcRequest>> {
+pub async fn start(
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> Result<mpsc::Receiver<IpcRequest>> {
     let sock_path = super::socket_path();
 
     // Check for already-running instance via the socket
@@ -37,17 +51,28 @@ pub async fn start() -> Result<mpsc::Receiver<IpcRequest>> {
 
     tokio::spawn(async move {
         loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let tx = tx.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = handle_connection(stream, tx).await {
-                            tracing::error!("IPC connection error: {}", e);
-                        }
-                    });
+            tokio::select! {
+                result = shutdown_rx.changed() => {
+                    let explicit = result.is_ok() && *shutdown_rx.borrow();
+                    tracing::info!("IPC server shutting down (explicit={})", explicit);
+                    break;
                 }
-                Err(e) => {
-                    tracing::error!("IPC accept error: {}", e);
+                result = listener.accept() => {
+                    match result {
+                        Ok((stream, _)) => {
+                            let tx = tx.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = handle_connection(stream, tx).await {
+                                    tracing::error!("IPC connection error: {}", e);
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            tracing::error!("IPC accept error: {}", e);
+                            // Sleep briefly to avoid busy-looping on persistent errors
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        }
+                    }
                 }
             }
         }
