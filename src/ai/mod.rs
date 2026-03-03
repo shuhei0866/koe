@@ -8,6 +8,20 @@ use crate::config::{AiConfig, AiEngine};
 use crate::context::WindowContext;
 use crate::dictionary::Dictionary;
 
+/// AI processing result (text + learnings).
+#[derive(Debug, Clone)]
+pub struct ProcessResult {
+    pub text: String,
+    pub learnings: Vec<Learning>,
+}
+
+/// Information learned by the LLM during processing.
+#[derive(Debug, Clone)]
+pub enum Learning {
+    Term { from: String, to: String },
+    Context { category: String, content: String },
+}
+
 /// Trait for AI text post-processing.
 #[async_trait]
 pub trait TextProcessor: Send + Sync {
@@ -16,11 +30,12 @@ pub trait TextProcessor: Send + Sync {
         raw_text: &str,
         context: &WindowContext,
         dictionary: &Dictionary,
-    ) -> Result<String>;
+        memory_context: &str,
+    ) -> Result<ProcessResult>;
 }
 
 /// Build the system prompt for AI post-processing.
-pub fn build_system_prompt(context: &WindowContext, dictionary: &Dictionary) -> String {
+pub fn build_system_prompt(context: &WindowContext, dictionary: &Dictionary, memory_context: &str) -> String {
     let mut prompt = String::from(
         "You are a voice input post-processor. Your job is to clean up and format speech-to-text output.\n\n\
          Rules:\n\
@@ -45,6 +60,19 @@ pub fn build_system_prompt(context: &WindowContext, dictionary: &Dictionary) -> 
     if !dict_info.is_empty() {
         prompt.push_str(&format!("\nDictionary:\n{}\n", dict_info));
     }
+
+    // Add memory context
+    if !memory_context.is_empty() {
+        prompt.push_str(&format!("\nLearned context from previous interactions:\n{}\n", memory_context));
+    }
+
+    // Add learning instructions
+    prompt.push_str(
+        "\nYou have access to learning tools. When you notice information worth remembering \
+         for future voice inputs (new terms, user context, domain knowledge), use the \
+         appropriate tool. Only learn genuinely useful information — do not learn from \
+         every input.\n"
+    );
 
     prompt
 }
