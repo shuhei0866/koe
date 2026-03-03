@@ -52,8 +52,9 @@ pub async fn start(
     tokio::spawn(async move {
         loop {
             tokio::select! {
-                _ = shutdown_rx.changed() => {
-                    tracing::info!("IPC server shutting down");
+                result = shutdown_rx.changed() => {
+                    let explicit = result.is_ok() && *shutdown_rx.borrow();
+                    tracing::info!("IPC server shutting down (explicit={})", explicit);
                     break;
                 }
                 result = listener.accept() => {
