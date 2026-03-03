@@ -63,12 +63,43 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
     let hotkey_rx = hotkey::start_hotkey_listener(config.hotkey.mode.clone(), &config.hotkey.key)
         .context("starting hotkey listener")?;
 
+    // Create shutdown channel
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    // Spawn signal handler (SIGTERM + SIGINT)
+    {
+        let shutdown_tx = shutdown_tx.clone();
+        tokio::spawn(async move {
+            let mut sigterm = tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::terminate(),
+            )
+            .expect("failed to register SIGTERM handler");
+
+            tokio::select! {
+                _ = sigterm.recv() => {
+                    tracing::info!("Received SIGTERM, shutting down...");
+                }
+                result = tokio::signal::ctrl_c() => {
+                    if let Err(e) = result {
+                        tracing::error!("Failed to listen for SIGINT: {}", e);
+                        return;
+                    }
+                    tracing::info!("Received SIGINT, shutting down...");
+                }
+            }
+
+            let _ = shutdown_tx.send(true);
+        });
+    }
+
     // Start IPC server
-    let ipc_rx = ipc::server::start().await.context("starting IPC server")?;
+    let ipc_rx = ipc::server::start(shutdown_rx.clone())
+        .await
+        .context("starting IPC server")?;
 
     // Start system tray (if gui feature enabled)
     #[cfg(feature = "gui")]
-    crate::ui::tray::start_tray();
+    crate::ui::tray::start_tray(shutdown_tx.clone());
 
     // Set initial Whisper hint from memory
     if config.memory.enabled && !mem.terms.is_empty() {
@@ -88,6 +119,13 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
 
     // Main event loop
     loop {
+        // Check for shutdown signal (from SIGTERM/SIGINT/tray).
+        // Worst-case latency is ~100ms (hotkey recv_timeout below).
+        if *shutdown_rx.borrow() {
+            tracing::info!("Shutdown signal received, exiting main loop");
+            break;
+        }
+
         // Check for IPC messages (non-blocking)
         match ipc_rx.try_recv() {
             Ok(ipc::IpcRequest::GetStatus) => {
@@ -175,6 +213,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
             }
             Ok(ipc::IpcRequest::Shutdown) => {
                 tracing::info!("IPC: Shutdown request received");
+                let _ = shutdown_tx.send(true);
                 break;
             }
             Err(mpsc::TryRecvError::Empty) => {}
@@ -378,6 +417,10 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
             }
         }
     }
+
+    // Cleanup socket on exit
+    ipc::server::cleanup_socket();
+    tracing::info!("Daemon stopped");
 
     Ok(())
 }
