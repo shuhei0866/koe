@@ -565,6 +565,7 @@ fn build_ai_page(
         let current_model = ol.model.clone();
         let list = ollama_model_list.clone();
         let combo = ollama_model_combo.clone();
+        let custom_entry = ollama_model_custom.clone();
 
         let (tx, rx) = std::sync::mpsc::channel::<Vec<String>>();
         std::thread::spawn(move || {
@@ -586,7 +587,10 @@ fn build_ai_page(
                     if let Some(idx) = models.iter().position(|m| *m == current_model) {
                         combo.set_selected(idx as u32);
                     } else {
+                        // Current model not in fetched list: fall back to "Other"
+                        // and pre-populate the custom entry so the model name is preserved.
                         combo.set_selected(models.len() as u32); // "Other"
+                        custom_entry.set_text(&current_model);
                     }
                     gtk4::glib::ControlFlow::Break
                 }
