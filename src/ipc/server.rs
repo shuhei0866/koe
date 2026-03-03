@@ -10,10 +10,18 @@ use super::{IpcRequest, IpcResponse};
 pub async fn start() -> Result<mpsc::Receiver<IpcRequest>> {
     let sock_path = super::socket_path();
 
-    // Remove stale socket file if it exists
+    // Check for already-running instance via the socket
     if sock_path.exists() {
-        std::fs::remove_file(&sock_path)
-            .with_context(|| format!("removing stale socket {}", sock_path.display()))?;
+        match std::os::unix::net::UnixStream::connect(&sock_path) {
+            Ok(_) => {
+                anyhow::bail!("koe daemon is already running (socket {} is active)", sock_path.display());
+            }
+            Err(_) => {
+                // Socket is stale — remove and continue
+                std::fs::remove_file(&sock_path)
+                    .with_context(|| format!("removing stale socket {}", sock_path.display()))?;
+            }
+        }
     }
 
     let listener = UnixListener::bind(&sock_path)
