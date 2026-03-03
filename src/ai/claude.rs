@@ -6,7 +6,7 @@ use crate::config::ClaudeConfig;
 use crate::context::WindowContext;
 use crate::dictionary::Dictionary;
 
-use super::{build_system_prompt, Learning, ProcessResult, TextProcessor};
+use super::{build_system_prompt, ConsolidationResult, Learning, ProcessResult, TextProcessor};
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -157,6 +157,76 @@ pub fn parse_response_text(resp: &serde_json::Value) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("unexpected Claude response format: {}", resp))
 }
 
+/// Parse the consolidation response containing JSON terms and Markdown context.
+pub fn parse_consolidation_response(text: &str) -> Result<ConsolidationResult> {
+    use std::collections::HashMap;
+
+    let mut terms: HashMap<String, String> = HashMap::new();
+    let mut context_markdown = String::new();
+
+    // Extract JSON block for terms
+    if let Some(json_start) = text.find("```json") {
+        let json_content = &text[json_start + 7..];
+        if let Some(json_end) = json_content.find("```") {
+            let json_str = json_content[..json_end].trim();
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_str) {
+                if let Some(terms_obj) = parsed.get("terms").and_then(|t| t.as_object()) {
+                    for (k, v) in terms_obj {
+                        if let Some(val) = v.as_str() {
+                            terms.insert(k.clone(), val.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Extract Markdown block for context
+    // Find the text after the JSON code block closes
+    let search_text = if let Some(json_start_pos) = text.find("```json") {
+        let after_json_tag = &text[json_start_pos + 7..];
+        if let Some(close_pos) = after_json_tag.find("```") {
+            let after_close = &after_json_tag[close_pos + 3..];
+            // Skip optional newline after closing ```
+            after_close.strip_prefix('\n').unwrap_or(after_close)
+        } else {
+            text
+        }
+    } else {
+        text
+    };
+
+    if let Some(md_start) = search_text.find("```markdown") {
+        let md_content = &search_text[md_start + 11..];
+        if let Some(md_end) = md_content.find("```") {
+            context_markdown = md_content[..md_end].trim().to_string();
+        }
+    }
+
+    // Also handle case where context is written directly (without code block)
+    // by looking for ## headers after the JSON block
+    if context_markdown.is_empty() {
+        let mut in_context = false;
+        let mut context_lines = Vec::new();
+        for line in search_text.lines() {
+            if line.starts_with("## ") {
+                in_context = true;
+            }
+            if in_context {
+                context_lines.push(line);
+            }
+        }
+        if !context_lines.is_empty() {
+            context_markdown = context_lines.join("\n");
+        }
+    }
+
+    Ok(ConsolidationResult {
+        terms,
+        context_markdown,
+    })
+}
+
 /// Send a minimal test request to verify API key and model.
 /// Returns the model's response text on success.
 pub fn test_connectivity(api_key: &str, model: &str) -> Result<String> {
@@ -239,6 +309,47 @@ impl TextProcessor for ClaudeProcessor {
             result.learnings.len()
         );
         Ok(result)
+    }
+
+    async fn consolidate_memory(
+        &self,
+        memory_content: &str,
+    ) -> Result<Option<ConsolidationResult>> {
+        let prompt = super::build_consolidation_prompt(memory_content);
+
+        // Use build_request_body without tools (consolidation doesn't need learning tools)
+        let body = build_request_body(
+            &self.model,
+            "You are a data consolidation assistant. Follow the output format exactly.",
+            &prompt,
+            None,
+        );
+
+        let response = self
+            .client
+            .post(ANTHROPIC_API_URL)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .context("sending consolidation request to Claude")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Claude consolidation error ({}): {}", status, body);
+        }
+
+        let resp: serde_json::Value = response
+            .json()
+            .await
+            .context("parsing consolidation response")?;
+        let text = parse_response_text(&resp)?;
+
+        let result = parse_consolidation_response(&text)?;
+        Ok(Some(result))
     }
 }
 
@@ -488,6 +599,70 @@ mod tests {
         assert!(!prompt.contains("Learned context from previous interactions:"));
         // But should still contain learning instructions
         assert!(prompt.contains("You have access to learning tools"));
+    }
+
+    #[test]
+    fn test_parse_consolidation_response() {
+        let text = r#"Here is the consolidated memory:
+
+```json
+{"terms": {"ラスト": "Rust", "クロード": "Claude"}}
+```
+
+```markdown
+## domain
+- ソフトウェア開発
+- Linux デスクトップ
+## user_profile
+- Rust エンジニア
+```
+"#;
+        let result = parse_consolidation_response(text).unwrap();
+        assert_eq!(result.terms.len(), 2);
+        assert_eq!(result.terms.get("ラスト").unwrap(), "Rust");
+        assert_eq!(result.terms.get("クロード").unwrap(), "Claude");
+        assert!(result.context_markdown.contains("## domain"));
+        assert!(result.context_markdown.contains("- ソフトウェア開発"));
+        assert!(result.context_markdown.contains("## user_profile"));
+    }
+
+    #[test]
+    fn test_parse_consolidation_response_no_json() {
+        let text = "No JSON block here, just text.\n## domain\n- something";
+        let result = parse_consolidation_response(text).unwrap();
+        assert!(result.terms.is_empty());
+        assert!(result.context_markdown.contains("## domain"));
+        assert!(result.context_markdown.contains("- something"));
+    }
+
+    #[test]
+    fn test_parse_consolidation_response_direct_markdown() {
+        let text = r#"```json
+{"terms": {"a": "A"}}
+```
+
+## category1
+- entry1
+- entry2
+## category2
+- entry3
+"#;
+        let result = parse_consolidation_response(text).unwrap();
+        assert_eq!(result.terms.len(), 1);
+        assert_eq!(result.terms.get("a").unwrap(), "A");
+        assert!(result.context_markdown.contains("## category1"));
+        assert!(result.context_markdown.contains("- entry1"));
+        assert!(result.context_markdown.contains("## category2"));
+        assert!(result.context_markdown.contains("- entry3"));
+    }
+
+    #[test]
+    fn test_build_consolidation_prompt() {
+        let memory_content = "## 用語辞書\n- ラスト → Rust\n\n## domain\n- ソフトウェア開発";
+        let prompt = crate::ai::build_consolidation_prompt(memory_content);
+        assert!(prompt.contains("メモリデータ"));
+        assert!(prompt.contains("ラスト → Rust"));
+        assert!(prompt.contains("ソフトウェア開発"));
     }
 
     /// Integration test: requires ANTHROPIC_API_KEY in env or GNOME Keyring.

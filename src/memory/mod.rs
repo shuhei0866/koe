@@ -122,6 +122,17 @@ impl Memory {
         terms.join(", ")
     }
 
+    /// Count total entries (terms + all context entries).
+    pub fn total_entries(&self) -> usize {
+        let context_count: usize = self.context.sections.values().map(|v| v.len()).sum();
+        self.terms.len() + context_count
+    }
+
+    /// Check if memory has accumulated enough entries to warrant consolidation.
+    pub fn needs_consolidation(&self, threshold: usize) -> bool {
+        self.total_entries() >= threshold
+    }
+
     /// Format memory for injection into an AI prompt.
     pub fn format_for_prompt(&self) -> String {
         let mut parts = Vec::new();
@@ -337,10 +348,39 @@ mod tests {
     }
 
     #[test]
+    fn test_total_entries() {
+        let dir = test_dir("total_entries");
+        let mut mem = Memory::load(&dir).unwrap();
+        assert_eq!(mem.total_entries(), 0);
+
+        mem.add_term("a", "A");
+        mem.add_term("b", "B");
+        mem.add_context("domain", "ソフトウェア");
+        assert_eq!(mem.total_entries(), 3);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn test_format_for_whisper_hint_empty() {
         let dir = test_dir("whisper_hint_empty");
         let mem = Memory::load(&dir).unwrap();
         assert_eq!(mem.format_for_whisper_hint(), "");
+    }
+
+    #[test]
+    fn test_needs_consolidation() {
+        let dir = test_dir("needs_consolidation");
+        let mut mem = Memory::load(&dir).unwrap();
+        assert!(!mem.needs_consolidation(3));
+
+        mem.add_term("a", "A");
+        mem.add_term("b", "B");
+        mem.add_context("domain", "test");
+        assert!(mem.needs_consolidation(3));
+        assert!(!mem.needs_consolidation(4));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
