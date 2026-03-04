@@ -36,6 +36,8 @@ mod indicator_bridge {
                 }
                 tracing::info!("Indicator thread started");
                 let ctx = gtk4::glib::MainContext::default();
+                let main_loop = gtk4::glib::MainLoop::new(None, false);
+                let main_loop_clone = main_loop.clone();
                 let indicator = IndicatorWindow::new();
                 ctx.spawn_local(async move {
                     tracing::debug!("Indicator receiver loop started");
@@ -48,11 +50,13 @@ mod indicator_bridge {
                             IndicatorMsg::AudioLevel(level) => {
                                 indicator.update_audio_level(level);
                             }
-                            IndicatorMsg::Shutdown => break,
+                            IndicatorMsg::Shutdown => {
+                                main_loop_clone.quit();
+                                break;
+                            }
                         }
                     }
                 });
-                let main_loop = gtk4::glib::MainLoop::new(None, false);
                 main_loop.run();
             })
             .ok()?;
