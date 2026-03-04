@@ -1,9 +1,64 @@
 use anyhow::{Context, Result};
 use std::sync::mpsc;
 use std::time::Duration;
+use tokio::task::JoinHandle;
 
 use crate::ipc;
 use crate::{ai, audio, config, context, dbus, dictionary, hotkey, input, memory, recognition, sound};
+
+#[cfg(feature = "gui")]
+mod indicator_bridge {
+    use crate::ui::indicator::IndicatorWindow;
+
+    pub enum IndicatorMsg {
+        StateChanged(String),
+        AudioLevel(f32),
+        Shutdown,
+    }
+
+    /// Spawn a dedicated GTK thread for the indicator window.
+    ///
+    /// Returns a Sender to communicate with the GTK thread, or None if
+    /// the indicator is disabled or GTK init fails.
+    pub fn start_indicator_thread(
+        enabled: bool,
+    ) -> Option<async_channel::Sender<IndicatorMsg>> {
+        if !enabled {
+            return None;
+        }
+        let (tx, rx) = async_channel::bounded::<IndicatorMsg>(64);
+        std::thread::Builder::new()
+            .name("indicator-gtk".into())
+            .spawn(move || {
+                if gtk4::init().is_err() {
+                    tracing::warn!("GTK init failed for indicator thread");
+                    return;
+                }
+                tracing::info!("Indicator thread started");
+                let ctx = gtk4::glib::MainContext::default();
+                let indicator = IndicatorWindow::new();
+                ctx.spawn_local(async move {
+                    tracing::debug!("Indicator receiver loop started");
+                    while let Ok(msg) = rx.recv().await {
+                        match msg {
+                            IndicatorMsg::StateChanged(state) => {
+                                tracing::debug!("Indicator: state → {}", state);
+                                indicator.show_state(&state);
+                            }
+                            IndicatorMsg::AudioLevel(level) => {
+                                indicator.update_audio_level(level);
+                            }
+                            IndicatorMsg::Shutdown => break,
+                        }
+                    }
+                });
+                let main_loop = gtk4::glib::MainLoop::new(None, false);
+                main_loop.run();
+            })
+            .ok()?;
+        Some(tx)
+    }
+}
 
 /// Application state machine.
 #[derive(Debug, Clone, PartialEq)]
@@ -25,11 +80,12 @@ impl std::fmt::Display for AppState {
     }
 }
 
-/// Notify D-Bus and tray icon of a state change.
+/// Notify D-Bus, tray icon, and indicator window of a state change.
 async fn notify_state_change(
     state: &AppState,
     dbus_emitter: &Option<dbus::DbusEmitter>,
     #[cfg(feature = "gui")] tray_handle: &Option<ksni::Handle<crate::ui::tray::KoeTray>>,
+    #[cfg(feature = "gui")] indicator_tx: &Option<async_channel::Sender<indicator_bridge::IndicatorMsg>>,
 ) {
     if let Some(ref emitter) = dbus_emitter {
         emitter.emit_state_changed(&state.to_string()).await;
@@ -37,6 +93,12 @@ async fn notify_state_change(
     #[cfg(feature = "gui")]
     if let Some(ref handle) = tray_handle {
         crate::ui::tray::update_tray_icon(handle, &state.to_string()).await;
+    }
+    #[cfg(feature = "gui")]
+    if let Some(ref tx) = indicator_tx {
+        let _ = tx.try_send(indicator_bridge::IndicatorMsg::StateChanged(
+            state.to_string(),
+        ));
     }
 }
 
@@ -73,6 +135,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
 
     // Initialize audio recorder
     let mut recorder = audio::AudioRecorder::new().context("creating audio recorder")?;
+    let rms_rx = recorder.rms_receiver();
 
     // Start hotkey listener
     let hotkey_rx = hotkey::start_hotkey_listener(config.hotkey.mode.clone(), &config.hotkey.key)
@@ -140,6 +203,14 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
     };
     #[cfg(not(feature = "gui"))]
     let _tray_handle: Option<()> = None;
+
+    // Start indicator window thread (if gui feature enabled)
+    #[cfg(feature = "gui")]
+    let indicator_tx =
+        indicator_bridge::start_indicator_thread(config.feedback.indicator_enabled);
+
+    // Audio level forwarding task handle (active only during Recording)
+    let mut audio_level_handle: Option<JoinHandle<()>> = None;
 
     // Set initial Whisper hint from memory
     if config.memory.enabled && !mem.terms.is_empty() {
@@ -270,27 +341,56 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                     if let Err(e) = recorder.start() {
                         tracing::error!("Failed to start recording: {}", e);
                         state = AppState::Idle;
-                        notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
+                        notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
                     } else {
                         // Recording started successfully
                         sound::play_if_enabled("message-new-instant", config.feedback.sound_enabled);
-                        notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
+                        notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
+
+                        // Spawn audio level forwarding task (~30fps)
+                        let mut rms_rx_clone = rms_rx.clone();
+                        let dbus_emitter_clone = dbus_emitter.clone();
+                        #[cfg(feature = "gui")]
+                        let indicator_tx_clone = indicator_tx.clone();
+                        audio_level_handle = Some(tokio::spawn(async move {
+                            loop {
+                                if rms_rx_clone.changed().await.is_err() {
+                                    break;
+                                }
+                                let level = *rms_rx_clone.borrow_and_update();
+                                if let Some(ref emitter) = dbus_emitter_clone {
+                                    emitter.emit_audio_level(level as f64).await;
+                                }
+                                #[cfg(feature = "gui")]
+                                if let Some(ref tx) = indicator_tx_clone {
+                                    let _ = tx.try_send(
+                                        indicator_bridge::IndicatorMsg::AudioLevel(level),
+                                    );
+                                }
+                                tokio::time::sleep(Duration::from_millis(33)).await;
+                            }
+                        }));
                     }
                 }
             }
             Ok(hotkey::HotkeyEvent::RecordStop) => {
                 if state == AppState::Recording {
+                    // Stop audio level forwarding task
+                    if let Some(handle) = audio_level_handle.take() {
+                        handle.abort();
+                    }
+
                     tracing::info!("<<< Recording stopped, processing...");
                     state = AppState::Processing;
                     sound::play_if_enabled("complete", config.feedback.sound_enabled);
-                    notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
+                    notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
 
                     match recorder.stop() {
                         Ok(audio_data) => {
                             if audio_data.samples.is_empty() {
                                 tracing::warn!("No audio captured");
                                 state = AppState::Idle;
-                                notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
+                                notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
                                 continue;
                             }
 
@@ -304,7 +404,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                     if raw_text.is_empty() {
                                         tracing::warn!("Empty transcription");
                                         state = AppState::Idle;
-                                        notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
+                                        notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
                                         continue;
                                     }
 
@@ -351,7 +451,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                             }
 
                                             state = AppState::Typing;
-                                            notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
+                                            notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
 
                                             if let Err(e) =
                                                 input::paste_text(&result.text)
@@ -379,7 +479,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                                 "Falling back to raw transcription"
                                             );
                                             state = AppState::Typing;
-                                            notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
+                                            notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
                                             let _ = input::paste_text(&corrected);
                                         }
                                     }
@@ -395,7 +495,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                     }
 
                     state = AppState::Idle;
-                    notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle).await;
+                    notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
                     tracing::info!("Ready for next input");
 
                     // Check if memory needs consolidation
@@ -468,6 +568,17 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                 break;
             }
         }
+    }
+
+    // Stop audio level task if still running
+    if let Some(handle) = audio_level_handle.take() {
+        handle.abort();
+    }
+
+    // Shutdown indicator window
+    #[cfg(feature = "gui")]
+    if let Some(ref tx) = indicator_tx {
+        let _ = tx.try_send(indicator_bridge::IndicatorMsg::Shutdown);
     }
 
     // Cleanup socket on exit
