@@ -18,6 +18,7 @@ impl KoeDaemon {
 }
 
 /// Emitter handle for sending D-Bus signals from the daemon.
+#[derive(Clone)]
 pub struct DbusEmitter {
     connection: Connection,
 }
