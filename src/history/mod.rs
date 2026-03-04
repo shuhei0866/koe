@@ -95,11 +95,17 @@ impl History {
     /// Add a new entry, persist immediately, and trim oldest entries if max_entries is exceeded.
     ///
     /// Auto-creates the directory if it does not exist.
+    /// Uses append-only write when no trimming is needed to avoid clobbering
+    /// concurrent writers (e.g. settings UI deleting entries while daemon adds).
     pub fn add_entry(
         &mut self,
         raw_text: impl Into<String>,
         processed_text: impl Into<String>,
     ) -> Result<&HistoryEntry> {
+        if self.max_entries == 0 {
+            anyhow::bail!("max_entries is 0; history storage is disabled");
+        }
+
         let entry = HistoryEntry {
             id: uuid::Uuid::new_v4().to_string(),
             timestamp: Utc::now(),
@@ -109,15 +115,40 @@ impl History {
         self.entries.push(entry);
 
         // Trim oldest entries when limit is exceeded.
-        if self.entries.len() > self.max_entries {
+        let needs_trim = self.entries.len() > self.max_entries;
+        if needs_trim {
             let excess = self.entries.len() - self.max_entries;
             self.entries.drain(0..excess);
+            // Full rewrite required after trim.
+            self.save()?;
+        } else {
+            // Append only the new entry to avoid overwriting concurrent changes.
+            self.append_last_entry()?;
         }
 
-        self.save()?;
-
-        // Return reference to the last entry (the one just added, after potential trim).
         Ok(self.entries.last().unwrap())
+    }
+
+    /// Append only the last entry to the history file.
+    fn append_last_entry(&self) -> Result<()> {
+        std::fs::create_dir_all(&self.dir)
+            .with_context(|| format!("creating directory {}", self.dir.display()))?;
+
+        let file_path = self.dir.join("history.jsonl");
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file_path)
+            .with_context(|| format!("opening {} for append", file_path.display()))?;
+
+        if let Some(entry) = self.entries.last() {
+            let line =
+                serde_json::to_string(entry).context("serializing history entry")?;
+            writeln!(file, "{}", line)
+                .with_context(|| format!("appending to {}", file_path.display()))?;
+        }
+
+        Ok(())
     }
 
     /// Search entries by text and/or date range.
@@ -321,6 +352,18 @@ mod tests {
         let h2 = History::load(&dir, 3).unwrap();
         assert_eq!(h2.entries.len(), 3);
         assert_eq!(h2.entries[0].raw_text, "two");
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn test_max_entries_zero_returns_error() {
+        let dir = test_dir("max_entries_zero");
+        let mut h = History::load(&dir, 0).unwrap();
+
+        let result = h.add_entry("should fail", "should fail");
+        assert!(result.is_err());
+        assert!(h.entries.is_empty());
 
         cleanup(&dir);
     }
