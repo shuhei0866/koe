@@ -231,8 +231,8 @@ fn refresh_list(
         Some(search_text.trim().to_string())
     };
 
-    let from_dt = parse_date_str(from_str);
-    let to_dt = parse_date_str(to_str);
+    let from_dt = parse_date_str(from_str, false);
+    let to_dt = parse_date_str(to_str, true);
 
     let query = SearchQuery {
         text: text_filter,
@@ -307,15 +307,22 @@ fn refresh_list(
 }
 
 /// Parse a "YYYY-MM-DD" string into a UTC DateTime, returning None if empty or invalid.
-fn parse_date_str(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+/// When `end_of_day` is true, the time is set to 23:59:59 so that the entire day is included
+/// (used for "to" date filters).
+fn parse_date_str(s: &str, end_of_day: bool) -> Option<chrono::DateTime<chrono::Utc>> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
         return None;
     }
-    // Try parsing as a date and convert to start-of-day UTC
     chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d")
         .ok()
-        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .and_then(|d| {
+            if end_of_day {
+                d.and_hms_opt(23, 59, 59)
+            } else {
+                d.and_hms_opt(0, 0, 0)
+            }
+        })
         .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc))
 }
 
