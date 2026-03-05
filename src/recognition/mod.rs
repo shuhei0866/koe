@@ -11,6 +11,10 @@ use crate::config::{RecognitionConfig, RecognitionEngine};
 #[async_trait]
 pub trait SpeechRecognizer: Send + Sync {
     async fn transcribe(&self, audio: &AudioData) -> Result<String>;
+
+    /// Set a prompt hint to improve recognition of specific terms.
+    /// The hint is a comma-separated list of terms the model should recognize.
+    fn set_prompt_hint(&mut self, hint: &str);
 }
 
 /// Create a recognizer based on config.

@@ -11,6 +11,12 @@ pub struct Config {
     pub input: InputConfig,
     #[serde(default)]
     pub dictionaries: DictionaryConfig,
+    #[serde(default)]
+    pub memory: MemoryConfig,
+    #[serde(default)]
+    pub feedback: FeedbackConfig,
+    #[serde(default)]
+    pub history: HistoryConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -113,6 +119,70 @@ impl Default for DictionaryConfig {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MemoryConfig {
+    #[serde(default = "default_memory_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_memory_dir")]
+    pub dir: String,
+    #[serde(default = "default_consolidation_threshold")]
+    pub consolidation_threshold: usize,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_memory_enabled(),
+            dir: default_memory_dir(),
+            consolidation_threshold: default_consolidation_threshold(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_history_dir")]
+    pub dir: String,
+    #[serde(default = "default_max_entries")]
+    pub max_entries: usize,
+}
+
+impl Default for HistoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            dir: default_history_dir(),
+            max_entries: default_max_entries(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct FeedbackConfig {
+    #[serde(default = "default_feedback_sound_enabled")]
+    pub sound_enabled: bool,
+    #[serde(default = "default_feedback_indicator_enabled")]
+    pub indicator_enabled: bool,
+}
+
+impl Default for FeedbackConfig {
+    fn default() -> Self {
+        Self {
+            sound_enabled: default_feedback_sound_enabled(),
+            indicator_enabled: default_feedback_indicator_enabled(),
+        }
+    }
+}
+
+fn default_feedback_sound_enabled() -> bool {
+    true
+}
+fn default_feedback_indicator_enabled() -> bool {
+    true
+}
+
 fn default_language() -> String {
     "ja".to_string()
 }
@@ -139,6 +209,24 @@ fn default_hotkey_key() -> String {
 }
 fn default_input_method() -> String {
     "direct_type".to_string()
+}
+fn default_memory_enabled() -> bool {
+    true
+}
+fn default_memory_dir() -> String {
+    "~/.local/share/koe/memory".to_string()
+}
+fn default_consolidation_threshold() -> usize {
+    50
+}
+fn default_true() -> bool {
+    true
+}
+fn default_history_dir() -> String {
+    "~/.local/share/koe/history".to_string()
+}
+fn default_max_entries() -> usize {
+    1000
 }
 
 /// Expand ~ and environment variables in a path string.
@@ -253,6 +341,16 @@ impl Config {
             .map(|w| expand_path(&w.model_path))
     }
 
+    /// Resolve the memory directory path (expand ~).
+    pub fn memory_dir(&self) -> PathBuf {
+        expand_path(&self.memory.dir)
+    }
+
+    /// Resolve the history directory path (expand ~).
+    pub fn history_dir(&self) -> PathBuf {
+        expand_path(&self.history.dir)
+    }
+
     /// Resolve dictionary paths (expand ~).
     pub fn dictionary_paths(&self) -> Vec<PathBuf> {
         self.dictionaries
@@ -322,6 +420,9 @@ mod tests {
                 method: "direct_type".to_string(),
             },
             dictionaries: DictionaryConfig { paths: vec![] },
+            memory: MemoryConfig::default(),
+            feedback: FeedbackConfig::default(),
+            history: HistoryConfig::default(),
         };
 
         // Save to temp file
@@ -336,6 +437,9 @@ mod tests {
         assert_eq!(loaded.ai.claude.unwrap().model, "claude-sonnet-4-6");
         assert_eq!(loaded.recognition.engine, RecognitionEngine::WhisperLocal);
         assert_eq!(loaded.hotkey.mode, HotkeyMode::PushToTalk);
+        assert_eq!(loaded.memory.consolidation_threshold, default_consolidation_threshold());
+        assert!(loaded.feedback.sound_enabled);
+        assert!(loaded.feedback.indicator_enabled);
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&dir);
@@ -364,6 +468,111 @@ api_key_env = "ANTHROPIC_API_KEY"
         assert_eq!(config.hotkey.key, "Super_R");
         assert_eq!(config.ai.claude.unwrap().model, "claude-sonnet-4-6");
         assert_eq!(config.input.method, "direct_type");
+        // feedback should have defaults
+        assert!(config.feedback.sound_enabled);
+        assert!(config.feedback.indicator_enabled);
+    }
+
+    #[test]
+    fn test_feedback_config_defaults() {
+        let feedback = FeedbackConfig::default();
+        assert!(feedback.sound_enabled);
+        assert!(feedback.indicator_enabled);
+    }
+
+    #[test]
+    fn test_feedback_config_custom_values() {
+        let toml_str = r#"
+[recognition]
+engine = "whisper_local"
+
+[recognition.whisper_local]
+model_path = "/tmp/model.bin"
+
+[ai]
+engine = "claude"
+
+[ai.claude]
+api_key_env = "ANTHROPIC_API_KEY"
+
+[hotkey]
+
+[feedback]
+sound_enabled = false
+indicator_enabled = false
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(!config.feedback.sound_enabled);
+        assert!(!config.feedback.indicator_enabled);
+    }
+
+    #[test]
+    fn test_history_config_defaults() {
+        let history = HistoryConfig::default();
+        assert!(history.enabled);
+        assert_eq!(history.dir, "~/.local/share/koe/history");
+        assert_eq!(history.max_entries, 1000);
+    }
+
+    #[test]
+    fn test_history_config_serialization_roundtrip() {
+        let history = HistoryConfig::default();
+        let toml_str = toml::to_string(&history).unwrap();
+        let loaded: HistoryConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(loaded.enabled, history.enabled);
+        assert_eq!(loaded.dir, history.dir);
+        assert_eq!(loaded.max_entries, history.max_entries);
+    }
+
+    #[test]
+    fn test_history_config_custom_values() {
+        let toml_str = r#"
+[recognition]
+engine = "whisper_local"
+
+[recognition.whisper_local]
+model_path = "/tmp/model.bin"
+
+[ai]
+engine = "claude"
+
+[ai.claude]
+api_key_env = "ANTHROPIC_API_KEY"
+
+[hotkey]
+
+[history]
+enabled = false
+dir = "/tmp/koe-history"
+max_entries = 500
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(!config.history.enabled);
+        assert_eq!(config.history.dir, "/tmp/koe-history");
+        assert_eq!(config.history.max_entries, 500);
+    }
+
+    #[test]
+    fn test_history_config_defaults_in_config() {
+        let toml_str = r#"
+[recognition]
+engine = "whisper_local"
+
+[recognition.whisper_local]
+model_path = "/tmp/model.bin"
+
+[ai]
+engine = "claude"
+
+[ai.claude]
+api_key_env = "ANTHROPIC_API_KEY"
+
+[hotkey]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.history.enabled);
+        assert_eq!(config.history.dir, "~/.local/share/koe/history");
+        assert_eq!(config.history.max_entries, 1000);
     }
 
     /// Integration test: resolve API key from GNOME Keyring.
