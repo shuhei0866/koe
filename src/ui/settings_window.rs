@@ -96,6 +96,7 @@ impl Widgets {
             dictionaries: DictionaryConfig { paths: vec![] },
             memory: Default::default(),
             feedback: Default::default(),
+            history: Default::default(),
         }
     }
 }
@@ -126,10 +127,13 @@ pub fn build(app: &libadwaita::Application) {
         ollama_model_custom,
     ) = build_ai_page(&config, &window);
 
+    let (history_page, _history_widgets) = super::history_page::build_history_page(&config);
+
     window.add(&general_page);
     window.add(&rec_page);
     window.add(&ai_page);
     window.add(&build_mic_test_page());
+    window.add(&history_page);
 
     let widgets = Rc::new(Widgets {
         hotkey_mode,
@@ -218,6 +222,7 @@ fn default_config() -> Config {
         dictionaries: DictionaryConfig { paths: vec![] },
         memory: Default::default(),
         feedback: Default::default(),
+        history: Default::default(),
     }
 }
 
