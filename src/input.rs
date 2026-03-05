@@ -16,24 +16,28 @@ const TERMINAL_CLASSES: &[&str] = &[
     "sakura",
 ];
 
-/// Check if the active window is a terminal emulator.
-fn is_active_window_terminal() -> bool {
-    let window_id = std::process::Command::new("xdotool")
+/// Capture the current active window ID via xdotool.
+/// Call this before showing overlays (e.g. indicator window) to preserve
+/// the real target window for later paste operations.
+pub fn capture_active_window() -> Option<String> {
+    let output = std::process::Command::new("xdotool")
         .arg("getactivewindow")
         .output()
-        .ok();
-
-    let Some(output) = window_id else {
-        return false;
-    };
+        .ok()?;
 
     let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if id.is_empty() {
-        return false;
+        None
+    } else {
+        tracing::debug!("Captured active window: {}", id);
+        Some(id)
     }
+}
 
+/// Check if the given window ID belongs to a terminal emulator.
+fn is_window_terminal(window_id: &str) -> bool {
     let wm_class = std::process::Command::new("xprop")
-        .args(["-id", &id, "WM_CLASS"])
+        .args(["-id", window_id, "WM_CLASS"])
         .output()
         .ok();
 
@@ -66,10 +70,18 @@ pub fn type_text(text: &str) -> Result<()> {
 }
 
 /// Type text using clipboard paste via xclip + xdotool.
-/// Auto-detects terminal windows and uses Ctrl+Shift+V instead of Ctrl+V.
-pub fn paste_text(text: &str) -> Result<()> {
+/// Uses a pre-captured window ID to determine terminal vs GUI paste key.
+/// If `target_window` is None, falls back to detecting the current active window.
+pub fn paste_text(text: &str, target_window: Option<&str>) -> Result<()> {
     if text.is_empty() {
         return Ok(());
+    }
+
+    // Focus the target window if we have one, to ensure paste goes to the right place
+    if let Some(wid) = target_window {
+        let _ = std::process::Command::new("xdotool")
+            .args(["windowfocus", "--sync", wid])
+            .status();
     }
 
     // Set clipboard via xclip
@@ -92,7 +104,15 @@ pub fn paste_text(text: &str) -> Result<()> {
     }
 
     // Use Ctrl+Shift+V for terminals, Ctrl+V for GUI apps
-    let is_terminal = is_active_window_terminal();
+    let is_terminal = match target_window {
+        Some(wid) => is_window_terminal(wid),
+        None => {
+            // Fallback: detect current active window
+            capture_active_window()
+                .map(|wid| is_window_terminal(&wid))
+                .unwrap_or(false)
+        }
+    };
     let paste_key = if is_terminal {
         "ctrl+shift+v"
     } else {
@@ -100,10 +120,11 @@ pub fn paste_text(text: &str) -> Result<()> {
     };
 
     tracing::info!(
-        "Pasting {} chars via {} (terminal={})",
+        "Pasting {} chars via {} (terminal={}, window={:?})",
         text.len(),
         paste_key,
-        is_terminal
+        is_terminal,
+        target_window
     );
 
     let status = std::process::Command::new("xdotool")

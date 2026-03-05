@@ -232,6 +232,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
 
     // Audio level forwarding task handle (active only during Recording)
     let mut audio_level_handle: Option<JoinHandle<()>> = None;
+    let mut active_window_id: Option<String> = None;
 
     // Set initial Whisper hint from memory
     if config.memory.enabled && !mem.terms.is_empty() {
@@ -358,6 +359,8 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
             Ok(hotkey::HotkeyEvent::RecordStart) => {
                 if state == AppState::Idle {
                     tracing::info!(">>> Recording started");
+                    // Capture the active window before showing indicator overlay
+                    active_window_id = input::capture_active_window();
                     state = AppState::Recording;
                     if let Err(e) = recorder.start() {
                         tracing::error!("Failed to start recording: {}", e);
@@ -482,7 +485,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                             notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
 
                                             if let Err(e) =
-                                                input::paste_text(&result.text)
+                                                input::paste_text(&result.text, active_window_id.as_deref())
                                             {
                                                 tracing::error!(
                                                     "Failed to paste text: {}",
@@ -516,7 +519,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
 
                                             state = AppState::Typing;
                                             notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
-                                            let _ = input::paste_text(&corrected);
+                                            let _ = input::paste_text(&corrected, active_window_id.as_deref());
                                         }
                                     }
                                 }
