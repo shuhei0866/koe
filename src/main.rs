@@ -7,9 +7,13 @@ mod context;
 mod daemon;
 mod dictionary;
 mod hotkey;
+mod history;
+mod memory;
 mod input;
 mod ipc;
 mod recognition;
+mod dbus;
+mod sound;
 #[cfg(feature = "gui")]
 mod ui;
 
@@ -17,7 +21,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "koe", about = "Ubuntu voice input system")]
+#[command(name = "koe", about = "Ubuntu voice input system", version)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
