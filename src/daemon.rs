@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::task::JoinHandle;
 
 use crate::ipc;
-use crate::{ai, audio, config, context, dbus, dictionary, hotkey, input, memory, recognition, sound};
+use crate::{ai, audio, config, context, dbus, dictionary, history::History, hotkey, input, memory, recognition, sound};
 
 #[cfg(feature = "gui")]
 mod indicator_bridge {
@@ -119,6 +119,23 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
         mem.terms.len(),
         mem.context.sections.len()
     );
+
+    // Load history (transcription log)
+    let mut history: Option<History> = if config.history.enabled {
+        match History::load(&config.history_dir(), config.history.max_entries) {
+            Ok(h) => {
+                tracing::info!("History loaded: {} entries", h.entries.len());
+                Some(h)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load history (non-fatal): {}", e);
+                None
+            }
+        }
+    } else {
+        tracing::info!("History disabled");
+        None
+    };
 
     // Load dictionaries
     let dict_paths = config.dictionary_paths();
@@ -454,6 +471,13 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                                 tracing::debug!("Whisper hint updated: {} terms", mem.terms.len());
                                             }
 
+                                            // Save to history (AI-processed path)
+                                            if let Some(ref mut hist) = history {
+                                                if let Err(e) = hist.add_entry(&raw_text, &result.text) {
+                                                    tracing::warn!("Failed to save history entry: {}", e);
+                                                }
+                                            }
+
                                             state = AppState::Typing;
                                             notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
 
@@ -482,6 +506,14 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                             tracing::info!(
                                                 "Falling back to raw transcription"
                                             );
+
+                                            // Save to history (fallback path: raw = processed)
+                                            if let Some(ref mut hist) = history {
+                                                if let Err(e) = hist.add_entry(&raw_text, &corrected) {
+                                                    tracing::warn!("Failed to save history entry: {}", e);
+                                                }
+                                            }
+
                                             state = AppState::Typing;
                                             notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
                                             let _ = input::paste_text(&corrected);

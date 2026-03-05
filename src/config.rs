@@ -15,6 +15,8 @@ pub struct Config {
     pub memory: MemoryConfig,
     #[serde(default)]
     pub feedback: FeedbackConfig,
+    #[serde(default)]
+    pub history: HistoryConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -137,6 +139,26 @@ impl Default for MemoryConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_history_dir")]
+    pub dir: String,
+    #[serde(default = "default_max_entries")]
+    pub max_entries: usize,
+}
+
+impl Default for HistoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            dir: default_history_dir(),
+            max_entries: default_max_entries(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct FeedbackConfig {
     #[serde(default = "default_feedback_sound_enabled")]
@@ -196,6 +218,15 @@ fn default_memory_dir() -> String {
 }
 fn default_consolidation_threshold() -> usize {
     50
+}
+fn default_true() -> bool {
+    true
+}
+fn default_history_dir() -> String {
+    "~/.local/share/koe/history".to_string()
+}
+fn default_max_entries() -> usize {
+    1000
 }
 
 /// Expand ~ and environment variables in a path string.
@@ -315,6 +346,11 @@ impl Config {
         expand_path(&self.memory.dir)
     }
 
+    /// Resolve the history directory path (expand ~).
+    pub fn history_dir(&self) -> PathBuf {
+        expand_path(&self.history.dir)
+    }
+
     /// Resolve dictionary paths (expand ~).
     pub fn dictionary_paths(&self) -> Vec<PathBuf> {
         self.dictionaries
@@ -386,6 +422,7 @@ mod tests {
             dictionaries: DictionaryConfig { paths: vec![] },
             memory: MemoryConfig::default(),
             feedback: FeedbackConfig::default(),
+            history: HistoryConfig::default(),
         };
 
         // Save to temp file
@@ -467,6 +504,75 @@ indicator_enabled = false
         let config: Config = toml::from_str(toml_str).unwrap();
         assert!(!config.feedback.sound_enabled);
         assert!(!config.feedback.indicator_enabled);
+    }
+
+    #[test]
+    fn test_history_config_defaults() {
+        let history = HistoryConfig::default();
+        assert!(history.enabled);
+        assert_eq!(history.dir, "~/.local/share/koe/history");
+        assert_eq!(history.max_entries, 1000);
+    }
+
+    #[test]
+    fn test_history_config_serialization_roundtrip() {
+        let history = HistoryConfig::default();
+        let toml_str = toml::to_string(&history).unwrap();
+        let loaded: HistoryConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(loaded.enabled, history.enabled);
+        assert_eq!(loaded.dir, history.dir);
+        assert_eq!(loaded.max_entries, history.max_entries);
+    }
+
+    #[test]
+    fn test_history_config_custom_values() {
+        let toml_str = r#"
+[recognition]
+engine = "whisper_local"
+
+[recognition.whisper_local]
+model_path = "/tmp/model.bin"
+
+[ai]
+engine = "claude"
+
+[ai.claude]
+api_key_env = "ANTHROPIC_API_KEY"
+
+[hotkey]
+
+[history]
+enabled = false
+dir = "/tmp/koe-history"
+max_entries = 500
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(!config.history.enabled);
+        assert_eq!(config.history.dir, "/tmp/koe-history");
+        assert_eq!(config.history.max_entries, 500);
+    }
+
+    #[test]
+    fn test_history_config_defaults_in_config() {
+        let toml_str = r#"
+[recognition]
+engine = "whisper_local"
+
+[recognition.whisper_local]
+model_path = "/tmp/model.bin"
+
+[ai]
+engine = "claude"
+
+[ai.claude]
+api_key_env = "ANTHROPIC_API_KEY"
+
+[hotkey]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.history.enabled);
+        assert_eq!(config.history.dir, "~/.local/share/koe/history");
+        assert_eq!(config.history.max_entries, 1000);
     }
 
     /// Integration test: resolve API key from GNOME Keyring.

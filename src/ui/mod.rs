@@ -1,3 +1,4 @@
+pub mod history_page;
 pub mod indicator;
 pub mod settings_window;
 pub mod tray;
