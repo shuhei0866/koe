@@ -20,6 +20,10 @@ cargo test           # テスト実行
 cargo build --release  # リリースビルド
 ```
 
+- Rust ファイルを変更した後は `cargo check` を実行して型エラーがないことを確認する
+- PR 作成前・コミット前は `cargo test && cargo clippy` も実行する
+- デーモン関連の変更時は、重複起動防止ロジック（PID ファイル or D-Bus 名）が壊れていないか確認する
+
 ## Architecture
 
 - `src/daemon.rs` — メインイベントループ（Idle → Recording → Processing → Typing）
