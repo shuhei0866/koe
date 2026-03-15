@@ -4,7 +4,7 @@
 [![Rust](https://img.shields.io/badge/Built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![Linux](https://img.shields.io/badge/Platform-Linux-green.svg)](https://ubuntu.com/)
 
-**superwhisper for Linux — AI-powered voice input, open source.**
+**The voice input tool Linux has been missing — AI-powered, open source.**
 
 <!-- TODO: Add demo GIF here -->
 
@@ -12,7 +12,7 @@
 
 ## Why koe?
 
-macOS users enjoy polished voice input tools like [superwhisper](https://superwhisper.com/) and [Aqua Voice](https://withaqua.com/), but Linux has had no equivalent — just raw STT with no intelligence behind it.
+macOS has polished voice input tools with AI post-processing, but Linux has had no equivalent — just raw STT with no intelligence behind it.
 
 **koe** fills that gap:
 
