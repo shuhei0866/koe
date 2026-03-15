@@ -1,2 +1,9 @@
 /target
 .worktrees/
+
+# Secrets & local config
+.env
+.env.*
+*.key
+*.pem
+config.toml.local
