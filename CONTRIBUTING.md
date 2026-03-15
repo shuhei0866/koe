@@ -12,7 +12,8 @@ Thank you for your interest in contributing to koe! This document covers the bas
 
 ```bash
 sudo apt install libasound2-dev libclang-dev libxkbcommon-dev \
-  libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake
+  libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake \
+  libgtk-4-dev libadwaita-1-dev
 ```
 
 ### Build & Verify

@@ -29,6 +29,8 @@ labels: bug
 <details>
 <summary>Output of <code>RUST_LOG=debug koe</code></summary>
 
+> Please redact API keys, personal data, and sensitive window/file names before posting.
+
 ```
 (paste logs here)
 ```
