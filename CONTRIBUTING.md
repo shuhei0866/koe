@@ -11,10 +11,15 @@ Thank you for your interest in contributing to koe! This document covers the bas
 - System dependencies:
 
 ```bash
+# Core (required for all builds)
 sudo apt install libasound2-dev libclang-dev libxkbcommon-dev \
-  libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake \
-  libgtk-4-dev libadwaita-1-dev
+  libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake
+
+# GUI (required for default build with --features gui, which is enabled by default)
+sudo apt install libgtk-4-dev libadwaita-1-dev
 ```
+
+> **Note:** The GUI settings window is feature-gated behind `--features gui` (enabled by default). If you only need the CLI, build with `cargo build --release --no-default-features --features vulkan` to skip GTK/libadwaita dependencies.
 
 ### Build & Verify
 
@@ -74,7 +79,7 @@ chore: update dependencies
 
 - Search existing issues before opening a new one.
 - Include: OS/distro version, Rust version, steps to reproduce, expected vs actual behavior.
-- Logs and error output are always helpful.
+- Logs and error output are always helpful. Please redact API keys, tokens, and any personal data before sharing.
 
 ## Areas Where Help is Wanted
 

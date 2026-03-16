@@ -6,8 +6,6 @@
 
 **The voice input tool Linux has been missing — AI-powered, open source.**
 
-<!-- TODO: Add demo GIF here -->
-
 ![Settings UI](assets/screenshots/settings.png)
 
 ## Why koe?
