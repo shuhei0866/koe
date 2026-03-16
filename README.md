@@ -4,7 +4,7 @@
 [![Rust](https://img.shields.io/badge/Built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![Linux](https://img.shields.io/badge/Platform-Linux-green.svg)](https://ubuntu.com/)
 
-**The voice input tool Linux has been missing — AI-powered, open source.**
+**The voice input tool Linux has been missing — AI-powered and open source.**
 
 <!-- TODO: Add demo GIF here -->
 
@@ -132,7 +132,8 @@ stateDiagram-v2
 
 ```bash
 sudo apt install -y libasound2-dev libclang-dev libxkbcommon-dev \
-  libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake
+  libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake \
+  libgtk-4-dev libadwaita-1-dev
 ```
 
 ### Download Whisper Model

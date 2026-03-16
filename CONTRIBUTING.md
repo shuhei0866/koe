@@ -57,7 +57,7 @@ cargo build --release  # Release build
 
 We recommend [Conventional Commits](https://www.conventionalcommits.org/):
 
-```
+```text
 feat: add new keybinding for toggle
 fix: correct audio device detection on PipeWire
 chore: update dependencies
