@@ -17,7 +17,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libclang-dev libxkbcommon-dev libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake libgtk-4-dev libadwaita-1-dev
-      - run: cargo check --locked
+      - run: cargo check --locked --no-default-features --features gui
 
   test:
     name: cargo test
@@ -29,7 +29,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libclang-dev libxkbcommon-dev libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake libgtk-4-dev libadwaita-1-dev
-      - run: cargo test --locked
+      - run: cargo test --locked --no-default-features --features gui
 
   clippy:
     name: cargo clippy
@@ -43,7 +43,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libclang-dev libxkbcommon-dev libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake libgtk-4-dev libadwaita-1-dev
-      - run: cargo clippy --locked -- -D warnings
+      - run: cargo clippy --locked --no-default-features --features gui -- -D warnings
 
   fmt:
     name: cargo fmt
