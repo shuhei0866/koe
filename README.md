@@ -225,3 +225,16 @@ notes = "Prefer English for programming language and tool names"
 | Async runtime | `tokio` |
 | Config file | `serde` + `toml` |
 | Logging | `tracing` |
+
+## Privacy
+
+koe's behavior depends on your configuration. Here's what data goes where:
+
+| Configuration | Data sent externally | Data stays local |
+|---|---|---|
+| **whisper-rs + Ollama** (fully local) | Nothing | Audio, transcription, window context, all processing |
+| **OpenAI Whisper API + Ollama** | Audio (to OpenAI for STT) | Window context, post-processing |
+| **whisper-rs + Claude API** | Transcribed text + active window title/app name (to Anthropic) | Audio |
+| **OpenAI API + Claude API** | Audio (to OpenAI) + transcribed text + window context (to Anthropic) | — |
+
+**Note on context awareness:** When using cloud AI (Claude API), koe sends the active window title and application name along with the transcribed text. Window titles may contain sensitive information (file paths, URLs, email subjects). For maximum privacy, use the fully local setup (whisper-rs + Ollama).
