@@ -75,7 +75,9 @@ pub async fn update_tray_icon(handle: &Handle<KoeTray>, state: &str) {
 }
 
 /// Start the system tray icon and return the handle for dynamic updates.
-pub async fn start_tray(shutdown_tx: tokio::sync::watch::Sender<bool>) -> Result<Handle<KoeTray>, ksni::Error> {
+pub async fn start_tray(
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
+) -> Result<Handle<KoeTray>, ksni::Error> {
     let tray = KoeTray {
         current_icon: "audio-input-microphone".to_string(),
         shutdown_tx,

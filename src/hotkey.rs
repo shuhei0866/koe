@@ -51,40 +51,40 @@ pub fn start_hotkey_listener(
     let (tx, rx) = mpsc::channel();
     let target_key = parse_key(key_name)?;
 
-    tracing::info!("Hotkey listener starting: key={}, mode={:?}", key_name, mode);
+    tracing::info!(
+        "Hotkey listener starting: key={}, mode={:?}",
+        key_name,
+        mode
+    );
 
     std::thread::spawn(move || {
         let mut is_recording = false;
 
-        let callback = move |event: Event| {
-            match event.event_type {
-                EventType::KeyPress(key) if key == target_key => {
-                    match mode {
-                        HotkeyMode::PushToTalk => {
-                            if !is_recording {
-                                is_recording = true;
-                                let _ = tx.send(HotkeyEvent::RecordStart);
-                            }
-                        }
-                        HotkeyMode::Toggle => {
-                            if is_recording {
-                                is_recording = false;
-                                let _ = tx.send(HotkeyEvent::RecordStop);
-                            } else {
-                                is_recording = true;
-                                let _ = tx.send(HotkeyEvent::RecordStart);
-                            }
-                        }
+        let callback = move |event: Event| match event.event_type {
+            EventType::KeyPress(key) if key == target_key => match mode {
+                HotkeyMode::PushToTalk => {
+                    if !is_recording {
+                        is_recording = true;
+                        let _ = tx.send(HotkeyEvent::RecordStart);
                     }
                 }
-                EventType::KeyRelease(key) if key == target_key => {
-                    if mode == HotkeyMode::PushToTalk && is_recording {
+                HotkeyMode::Toggle => {
+                    if is_recording {
                         is_recording = false;
                         let _ = tx.send(HotkeyEvent::RecordStop);
+                    } else {
+                        is_recording = true;
+                        let _ = tx.send(HotkeyEvent::RecordStart);
                     }
                 }
-                _ => {}
+            },
+            EventType::KeyRelease(key) if key == target_key => {
+                if mode == HotkeyMode::PushToTalk && is_recording {
+                    is_recording = false;
+                    let _ = tx.send(HotkeyEvent::RecordStop);
+                }
             }
+            _ => {}
         };
 
         if let Err(e) = listen(callback) {

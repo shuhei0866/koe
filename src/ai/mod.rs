@@ -43,14 +43,16 @@ pub trait TextProcessor: Send + Sync {
 
     /// Consolidate memory data by summarizing and deduplicating.
     /// Returns None if the engine does not support consolidation.
-    async fn consolidate_memory(
-        &self,
-        memory_content: &str,
-    ) -> Result<Option<ConsolidationResult>>;
+    async fn consolidate_memory(&self, memory_content: &str)
+        -> Result<Option<ConsolidationResult>>;
 }
 
 /// Build the system prompt for AI post-processing.
-pub fn build_system_prompt(context: &WindowContext, dictionary: &Dictionary, memory_context: &str) -> String {
+pub fn build_system_prompt(
+    context: &WindowContext,
+    dictionary: &Dictionary,
+    memory_context: &str,
+) -> String {
     let mut prompt = String::from(
         "You are a voice input post-processor. Your job is to clean up and format speech-to-text output.\n\n\
          Rules:\n\
@@ -78,7 +80,10 @@ pub fn build_system_prompt(context: &WindowContext, dictionary: &Dictionary, mem
 
     // Add memory context
     if !memory_context.is_empty() {
-        prompt.push_str(&format!("\nLearned context from previous interactions:\n{}\n", memory_context));
+        prompt.push_str(&format!(
+            "\nLearned context from previous interactions:\n{}\n",
+            memory_context
+        ));
     }
 
     // Add learning instructions
@@ -86,7 +91,7 @@ pub fn build_system_prompt(context: &WindowContext, dictionary: &Dictionary, mem
         "\nYou have access to learning tools. When you notice information worth remembering \
          for future voice inputs (new terms, user context, domain knowledge), use the \
          appropriate tool. Only learn genuinely useful information — do not learn from \
-         every input.\n"
+         every input.\n",
     );
 
     prompt

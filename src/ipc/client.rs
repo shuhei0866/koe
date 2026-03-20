@@ -18,7 +18,9 @@ pub fn send_request(request: &IpcRequest) -> Result<IpcResponse> {
 
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    reader.read_line(&mut line).context("reading IPC response")?;
+    reader
+        .read_line(&mut line)
+        .context("reading IPC response")?;
 
     let response: IpcResponse =
         serde_json::from_str(line.trim()).context("parsing IPC response")?;

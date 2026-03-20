@@ -30,7 +30,12 @@ impl ClaudeProcessor {
 }
 
 /// Build the JSON request body for the Claude Messages API.
-pub fn build_request_body(model: &str, system_prompt: &str, user_message: &str, tools: Option<&serde_json::Value>) -> serde_json::Value {
+pub fn build_request_body(
+    model: &str,
+    system_prompt: &str,
+    user_message: &str,
+    tools: Option<&serde_json::Value>,
+) -> serde_json::Value {
     let mut body = json!({
         "model": model,
         "max_tokens": 4096,
@@ -389,7 +394,8 @@ mod tests {
 
     #[test]
     fn test_parse_response_text_success() {
-        let resp: serde_json::Value = serde_json::from_str(r#"
+        let resp: serde_json::Value = serde_json::from_str(
+            r#"
         {
             "id": "msg_123",
             "type": "message",
@@ -400,50 +406,64 @@ mod tests {
             "model": "claude-sonnet-4-6",
             "stop_reason": "end_turn"
         }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert_eq!(parse_response_text(&resp).unwrap(), "OK");
     }
 
     #[test]
     fn test_parse_response_text_multi_block() {
-        let resp: serde_json::Value = serde_json::from_str(r#"
+        let resp: serde_json::Value = serde_json::from_str(
+            r#"
         {
             "content": [
                 { "type": "text", "text": "First block" },
                 { "type": "text", "text": "Second block" }
             ]
         }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         // Should return the first block
         assert_eq!(parse_response_text(&resp).unwrap(), "First block");
     }
 
     #[test]
     fn test_parse_response_text_empty_content() {
-        let resp: serde_json::Value = serde_json::from_str(r#"
+        let resp: serde_json::Value = serde_json::from_str(
+            r#"
         { "content": [] }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert!(parse_response_text(&resp).is_err());
     }
 
     #[test]
     fn test_parse_response_text_unexpected_format() {
-        let resp: serde_json::Value = serde_json::from_str(r#"
+        let resp: serde_json::Value = serde_json::from_str(
+            r#"
         { "error": "something went wrong" }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert!(parse_response_text(&resp).is_err());
     }
 
     #[test]
     fn test_parse_process_result_text_only() {
-        let resp: serde_json::Value = serde_json::from_str(r#"
+        let resp: serde_json::Value = serde_json::from_str(
+            r#"
         {
             "content": [
                 { "type": "text", "text": "Hello, world!" }
             ],
             "stop_reason": "end_turn"
         }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let result = parse_process_result(&resp).unwrap();
         assert_eq!(result.text, "Hello, world!");
         assert!(result.learnings.is_empty());
@@ -451,7 +471,8 @@ mod tests {
 
     #[test]
     fn test_parse_process_result_with_learn_term() {
-        let resp: serde_json::Value = serde_json::from_str(r#"
+        let resp: serde_json::Value = serde_json::from_str(
+            r#"
         {
             "content": [
                 { "type": "text", "text": "Rustで書かれたコード" },
@@ -464,7 +485,9 @@ mod tests {
             ],
             "stop_reason": "end_turn"
         }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let result = parse_process_result(&resp).unwrap();
         assert_eq!(result.text, "Rustで書かれたコード");
         assert_eq!(result.learnings.len(), 1);
@@ -479,7 +502,8 @@ mod tests {
 
     #[test]
     fn test_parse_process_result_with_learn_context() {
-        let resp: serde_json::Value = serde_json::from_str(r#"
+        let resp: serde_json::Value = serde_json::from_str(
+            r#"
         {
             "content": [
                 { "type": "text", "text": "処理済みテキスト" },
@@ -495,7 +519,9 @@ mod tests {
             ],
             "stop_reason": "end_turn"
         }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let result = parse_process_result(&resp).unwrap();
         assert_eq!(result.text, "処理済みテキスト");
         assert_eq!(result.learnings.len(), 1);
@@ -510,7 +536,8 @@ mod tests {
 
     #[test]
     fn test_parse_process_result_multiple_learnings() {
-        let resp: serde_json::Value = serde_json::from_str(r#"
+        let resp: serde_json::Value = serde_json::from_str(
+            r#"
         {
             "content": [
                 { "type": "text", "text": "koeプロジェクトのRustコード" },
@@ -538,7 +565,9 @@ mod tests {
             ],
             "stop_reason": "end_turn"
         }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let result = parse_process_result(&resp).unwrap();
         assert_eq!(result.text, "koeプロジェクトのRustコード");
         assert_eq!(result.learnings.len(), 3);
@@ -546,7 +575,8 @@ mod tests {
 
     #[test]
     fn test_parse_process_result_no_text() {
-        let resp: serde_json::Value = serde_json::from_str(r#"
+        let resp: serde_json::Value = serde_json::from_str(
+            r#"
         {
             "content": [
                 {
@@ -558,7 +588,9 @@ mod tests {
             ],
             "stop_reason": "end_turn"
         }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let result = parse_process_result(&resp);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("No text content"));
@@ -694,6 +726,9 @@ mod tests {
             Ok(text) => println!("claude-sonnet-4-6 OK: {}", text),
             Err(e) => println!("claude-sonnet-4-6 FAILED: {}", e),
         }
-        assert!(result.is_ok(), "claude-sonnet-4-6 should be a valid model ID");
+        assert!(
+            result.is_ok(),
+            "claude-sonnet-4-6 should be a valid model ID"
+        );
     }
 }

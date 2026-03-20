@@ -20,8 +20,11 @@ pub fn build_history_page(config: &Config) -> (libadwaita::PreferencesPage, Hist
     let history_dir = config.history_dir();
     let max_entries = config.history.max_entries;
     let history = History::load(&history_dir, max_entries).unwrap_or_else(|_| {
-        History::load(&std::env::temp_dir().join("koe-history-fallback"), max_entries)
-            .unwrap_or_else(|_| panic!("Failed to load history"))
+        History::load(
+            &std::env::temp_dir().join("koe-history-fallback"),
+            max_entries,
+        )
+        .unwrap_or_else(|_| panic!("Failed to load history"))
     });
     let history = Rc::new(RefCell::new(history));
 
@@ -56,9 +59,7 @@ pub fn build_history_page(config: &Config) -> (libadwaita::PreferencesPage, Hist
         .placeholder_text("YYYY-MM-DD")
         .hexpand(true)
         .build();
-    let from_row = libadwaita::ActionRow::builder()
-        .title("From date")
-        .build();
+    let from_row = libadwaita::ActionRow::builder().title("From date").build();
     from_row.add_suffix(&from_entry);
     search_group.add(&from_row);
 
@@ -66,9 +67,7 @@ pub fn build_history_page(config: &Config) -> (libadwaita::PreferencesPage, Hist
         .placeholder_text("YYYY-MM-DD")
         .hexpand(true)
         .build();
-    let to_row = libadwaita::ActionRow::builder()
-        .title("To date")
-        .build();
+    let to_row = libadwaita::ActionRow::builder().title("To date").build();
     to_row.add_suffix(&to_entry);
     search_group.add(&to_row);
 
@@ -255,10 +254,7 @@ fn refresh_list(
     for entry in results {
         let id = entry.id.clone();
         let processed_text = entry.processed_text.clone();
-        let timestamp_str = entry
-            .timestamp
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
+        let timestamp_str = entry.timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
 
         let preview = truncate_str(&processed_text, 80).to_string();
 
@@ -389,9 +385,7 @@ fn export_history(
                         let mut buf = Vec::new();
                         hist.export_csv(&mut buf)
                             .map_err(|e| e.to_string())
-                            .and_then(|_| {
-                                std::fs::write(&path, &buf).map_err(|e| e.to_string())
-                            })
+                            .and_then(|_| std::fs::write(&path, &buf).map_err(|e| e.to_string()))
                     } else {
                         let hist = history_ref.borrow();
                         hist.export_json()
@@ -441,7 +435,9 @@ fn show_clear_confirmation(
 ) {
     let dialog = libadwaita::MessageDialog::builder()
         .heading("Clear All History?")
-        .body("This will permanently delete all transcription history. This action cannot be undone.")
+        .body(
+            "This will permanently delete all transcription history. This action cannot be undone.",
+        )
         .build();
 
     dialog.add_response("cancel", "Cancel");

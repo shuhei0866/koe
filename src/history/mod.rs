@@ -83,8 +83,7 @@ impl History {
             .with_context(|| format!("creating {}", file_path.display()))?;
 
         for entry in &self.entries {
-            let line =
-                serde_json::to_string(entry).context("serializing history entry")?;
+            let line = serde_json::to_string(entry).context("serializing history entry")?;
             writeln!(file, "{}", line)
                 .with_context(|| format!("writing {}", file_path.display()))?;
         }
@@ -142,8 +141,7 @@ impl History {
             .with_context(|| format!("opening {} for append", file_path.display()))?;
 
         if let Some(entry) = self.entries.last() {
-            let line =
-                serde_json::to_string(entry).context("serializing history entry")?;
+            let line = serde_json::to_string(entry).context("serializing history entry")?;
             writeln!(file, "{}", line)
                 .with_context(|| format!("appending to {}", file_path.display()))?;
         }
@@ -324,8 +322,7 @@ mod tests {
         h.add_entry("a", "A").unwrap();
         h.add_entry("b", "B").unwrap();
         h.add_entry("c", "C").unwrap();
-        let ids: std::collections::HashSet<_> =
-            h.entries.iter().map(|e| e.id.clone()).collect();
+        let ids: std::collections::HashSet<_> = h.entries.iter().map(|e| e.id.clone()).collect();
         assert_eq!(ids.len(), 3);
         cleanup(&dir);
     }

@@ -95,9 +95,7 @@ impl IndicatorWindow {
 
         // Make the window transparent using CSS
         let css_provider = gtk4::CssProvider::new();
-        css_provider.load_from_data(
-            "window.indicator-window { background-color: transparent; }",
-        );
+        css_provider.load_from_data("window.indicator-window { background-color: transparent; }");
         gtk4::style_context_add_provider_for_display(
             &gtk4::gdk::Display::default().expect("display should exist"),
             &css_provider,
@@ -234,13 +232,7 @@ impl IndicatorWindow {
 fn draw_rounded_rect(cr: &cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
     cr.new_sub_path();
     cr.arc(x + w - r, y + r, r, -std::f64::consts::FRAC_PI_2, 0.0);
-    cr.arc(
-        x + w - r,
-        y + h - r,
-        r,
-        0.0,
-        std::f64::consts::FRAC_PI_2,
-    );
+    cr.arc(x + w - r, y + h - r, r, 0.0, std::f64::consts::FRAC_PI_2);
     cr.arc(
         x + r,
         y + h - r,

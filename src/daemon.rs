@@ -4,7 +4,10 @@ use std::time::Duration;
 use tokio::task::JoinHandle;
 
 use crate::ipc;
-use crate::{ai, audio, config, context, dbus, dictionary, history::History, hotkey, input, memory, recognition, sound};
+use crate::{
+    ai, audio, config, context, dbus, dictionary, history::History, hotkey, input, memory,
+    recognition, sound,
+};
 
 #[cfg(feature = "gui")]
 mod indicator_bridge {
@@ -20,9 +23,7 @@ mod indicator_bridge {
     ///
     /// Returns a Sender to communicate with the GTK thread, or None if
     /// the indicator is disabled or GTK init fails.
-    pub fn start_indicator_thread(
-        enabled: bool,
-    ) -> Option<async_channel::Sender<IndicatorMsg>> {
+    pub fn start_indicator_thread(enabled: bool) -> Option<async_channel::Sender<IndicatorMsg>> {
         if !enabled {
             return None;
         }
@@ -89,7 +90,9 @@ async fn notify_state_change(
     state: &AppState,
     dbus_emitter: &Option<dbus::DbusEmitter>,
     #[cfg(feature = "gui")] tray_handle: &Option<ksni::Handle<crate::ui::tray::KoeTray>>,
-    #[cfg(feature = "gui")] indicator_tx: &Option<async_channel::Sender<indicator_bridge::IndicatorMsg>>,
+    #[cfg(feature = "gui")] indicator_tx: &Option<
+        async_channel::Sender<indicator_bridge::IndicatorMsg>,
+    >,
 ) {
     if let Some(ref emitter) = dbus_emitter {
         emitter.emit_state_changed(&state.to_string()).await;
@@ -145,10 +148,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
     // Initialize speech recognizer
     let mut recognizer =
         recognition::create_recognizer(&config.recognition).context("creating recognizer")?;
-    tracing::info!(
-        "Speech recognizer ready: {:?}",
-        config.recognition.engine
-    );
+    tracing::info!("Speech recognizer ready: {:?}", config.recognition.engine);
 
     // Initialize AI processor
     let mut processor = ai::create_processor(&config.ai).context("creating AI processor")?;
@@ -169,10 +169,9 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
     {
         let shutdown_tx = shutdown_tx.clone();
         tokio::spawn(async move {
-            let mut sigterm = tokio::signal::unix::signal(
-                tokio::signal::unix::SignalKind::terminate(),
-            )
-            .expect("failed to register SIGTERM handler");
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("failed to register SIGTERM handler");
 
             tokio::select! {
                 _ = sigterm.recv() => {
@@ -227,8 +226,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
 
     // Start indicator window thread (if gui feature enabled)
     #[cfg(feature = "gui")]
-    let indicator_tx =
-        indicator_bridge::start_indicator_thread(config.feedback.indicator_enabled);
+    let indicator_tx = indicator_bridge::start_indicator_thread(config.feedback.indicator_enabled);
 
     // Audio level forwarding task handle (active only during Recording)
     let mut audio_level_handle: Option<JoinHandle<()>> = None;
@@ -267,10 +265,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
             Ok(ipc::IpcRequest::ReloadConfig) => {
                 tracing::info!("IPC: ReloadConfig request received");
                 if state != AppState::Idle {
-                    tracing::warn!(
-                        "Skipping config reload: state is {} (must be Idle)",
-                        state
-                    );
+                    tracing::warn!("Skipping config reload: state is {} (must be Idle)", state);
                 } else {
                     match config::Config::load() {
                         Ok(new_config) => {
@@ -365,11 +360,30 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                     if let Err(e) = recorder.start() {
                         tracing::error!("Failed to start recording: {}", e);
                         state = AppState::Idle;
-                        notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
+                        notify_state_change(
+                            &state,
+                            &dbus_emitter,
+                            #[cfg(feature = "gui")]
+                            &tray_handle,
+                            #[cfg(feature = "gui")]
+                            &indicator_tx,
+                        )
+                        .await;
                     } else {
                         // Recording started successfully
-                        sound::play_if_enabled("message-new-instant", config.feedback.sound_enabled);
-                        notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
+                        sound::play_if_enabled(
+                            "message-new-instant",
+                            config.feedback.sound_enabled,
+                        );
+                        notify_state_change(
+                            &state,
+                            &dbus_emitter,
+                            #[cfg(feature = "gui")]
+                            &tray_handle,
+                            #[cfg(feature = "gui")]
+                            &indicator_tx,
+                        )
+                        .await;
 
                         // Spawn audio level forwarding task (~30fps)
                         let mut rms_rx_clone = rms_rx.clone();
@@ -407,14 +421,30 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                     tracing::info!("<<< Recording stopped, processing...");
                     state = AppState::Processing;
                     sound::play_if_enabled("complete", config.feedback.sound_enabled);
-                    notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
+                    notify_state_change(
+                        &state,
+                        &dbus_emitter,
+                        #[cfg(feature = "gui")]
+                        &tray_handle,
+                        #[cfg(feature = "gui")]
+                        &indicator_tx,
+                    )
+                    .await;
 
                     match recorder.stop() {
                         Ok(audio_data) => {
                             if audio_data.samples.is_empty() {
                                 tracing::warn!("No audio captured");
                                 state = AppState::Idle;
-                                notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
+                                notify_state_change(
+                                    &state,
+                                    &dbus_emitter,
+                                    #[cfg(feature = "gui")]
+                                    &tray_handle,
+                                    #[cfg(feature = "gui")]
+                                    &indicator_tx,
+                                )
+                                .await;
                                 continue;
                             }
 
@@ -428,7 +458,15 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                     if raw_text.is_empty() {
                                         tracing::warn!("Empty transcription");
                                         state = AppState::Idle;
-                                        notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
+                                        notify_state_change(
+                                            &state,
+                                            &dbus_emitter,
+                                            #[cfg(feature = "gui")]
+                                            &tray_handle,
+                                            #[cfg(feature = "gui")]
+                                            &indicator_tx,
+                                        )
+                                        .await;
                                         continue;
                                     }
 
@@ -440,7 +478,12 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                     // AI post-processing
                                     let memory_context = mem.format_for_prompt();
                                     match processor
-                                        .process(&corrected, &window_ctx, &dictionary, &memory_context)
+                                        .process(
+                                            &corrected,
+                                            &window_ctx,
+                                            &dictionary,
+                                            &memory_context,
+                                        )
                                         .await
                                     {
                                         Ok(result) => {
@@ -451,15 +494,27 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                             );
 
                                             // Save learnings to memory (only when memory is enabled)
-                                            if config.memory.enabled && !result.learnings.is_empty() {
+                                            if config.memory.enabled && !result.learnings.is_empty()
+                                            {
                                                 for learning in &result.learnings {
                                                     match learning {
                                                         ai::Learning::Term { from, to } => {
-                                                            tracing::info!("Learned term: {} → {}", from, to);
+                                                            tracing::info!(
+                                                                "Learned term: {} → {}",
+                                                                from,
+                                                                to
+                                                            );
                                                             mem.add_term(from, to);
                                                         }
-                                                        ai::Learning::Context { category, content } => {
-                                                            tracing::info!("Learned context [{}]: {}", category, content);
+                                                        ai::Learning::Context {
+                                                            category,
+                                                            content,
+                                                        } => {
+                                                            tracing::info!(
+                                                                "Learned context [{}]: {}",
+                                                                category,
+                                                                content
+                                                            );
                                                             mem.add_context(category, content);
                                                         }
                                                     }
@@ -471,29 +526,41 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                                 // Update Whisper hint with new terms
                                                 let hint = mem.format_for_whisper_hint();
                                                 recognizer.set_prompt_hint(&hint);
-                                                tracing::debug!("Whisper hint updated: {} terms", mem.terms.len());
+                                                tracing::debug!(
+                                                    "Whisper hint updated: {} terms",
+                                                    mem.terms.len()
+                                                );
                                             }
 
                                             // Save to history (AI-processed path)
                                             if let Some(ref mut hist) = history {
-                                                if let Err(e) = hist.add_entry(&raw_text, &result.text) {
-                                                    tracing::warn!("Failed to save history entry: {}", e);
+                                                if let Err(e) =
+                                                    hist.add_entry(&raw_text, &result.text)
+                                                {
+                                                    tracing::warn!(
+                                                        "Failed to save history entry: {}",
+                                                        e
+                                                    );
                                                 }
                                             }
 
                                             state = AppState::Typing;
-                                            notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
+                                            notify_state_change(
+                                                &state,
+                                                &dbus_emitter,
+                                                #[cfg(feature = "gui")]
+                                                &tray_handle,
+                                                #[cfg(feature = "gui")]
+                                                &indicator_tx,
+                                            )
+                                            .await;
 
-                                            if let Err(e) =
-                                                input::paste_text(&result.text, active_window_id.as_deref())
-                                            {
-                                                tracing::error!(
-                                                    "Failed to paste text: {}",
-                                                    e
-                                                );
-                                                if let Err(e2) =
-                                                    input::type_text(&result.text)
-                                                {
+                                            if let Err(e) = input::paste_text(
+                                                &result.text,
+                                                active_window_id.as_deref(),
+                                            ) {
+                                                tracing::error!("Failed to paste text: {}", e);
+                                                if let Err(e2) = input::type_text(&result.text) {
                                                     tracing::error!(
                                                         "Direct type also failed: {}",
                                                         e2
@@ -502,24 +569,35 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                             }
                                         }
                                         Err(e) => {
-                                            tracing::error!(
-                                                "AI processing failed: {}",
-                                                e
-                                            );
-                                            tracing::info!(
-                                                "Falling back to raw transcription"
-                                            );
+                                            tracing::error!("AI processing failed: {}", e);
+                                            tracing::info!("Falling back to raw transcription");
 
                                             // Save to history (fallback path: raw = processed)
                                             if let Some(ref mut hist) = history {
-                                                if let Err(e) = hist.add_entry(&raw_text, &corrected) {
-                                                    tracing::warn!("Failed to save history entry: {}", e);
+                                                if let Err(e) =
+                                                    hist.add_entry(&raw_text, &corrected)
+                                                {
+                                                    tracing::warn!(
+                                                        "Failed to save history entry: {}",
+                                                        e
+                                                    );
                                                 }
                                             }
 
                                             state = AppState::Typing;
-                                            notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
-                                            let _ = input::paste_text(&corrected, active_window_id.as_deref());
+                                            notify_state_change(
+                                                &state,
+                                                &dbus_emitter,
+                                                #[cfg(feature = "gui")]
+                                                &tray_handle,
+                                                #[cfg(feature = "gui")]
+                                                &indicator_tx,
+                                            )
+                                            .await;
+                                            let _ = input::paste_text(
+                                                &corrected,
+                                                active_window_id.as_deref(),
+                                            );
                                         }
                                     }
                                 }
@@ -534,7 +612,15 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                     }
 
                     state = AppState::Idle;
-                    notify_state_change(&state, &dbus_emitter, #[cfg(feature = "gui")] &tray_handle, #[cfg(feature = "gui")] &indicator_tx).await;
+                    notify_state_change(
+                        &state,
+                        &dbus_emitter,
+                        #[cfg(feature = "gui")]
+                        &tray_handle,
+                        #[cfg(feature = "gui")]
+                        &indicator_tx,
+                    )
+                    .await;
                     tracing::info!("Ready for next input");
 
                     // Check if memory needs consolidation
@@ -552,8 +638,10 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                         match processor.consolidate_memory(&mem.format_for_prompt()).await {
                             Ok(Some(result)) => {
                                 // Guard: reject consolidation results that would lose data
-                                let would_lose_terms = result.terms.is_empty() && !mem.terms.is_empty();
-                                if (result.terms.is_empty() && result.context_markdown.trim().is_empty())
+                                let would_lose_terms =
+                                    result.terms.is_empty() && !mem.terms.is_empty();
+                                if (result.terms.is_empty()
+                                    && result.context_markdown.trim().is_empty())
                                     || would_lose_terms
                                 {
                                     tracing::warn!(
@@ -573,9 +661,14 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                                     } else {
                                         mem.terms = result.terms;
                                     }
-                                    mem.context = memory::Memory::parse_context_markdown(&result.context_markdown);
+                                    mem.context = memory::Memory::parse_context_markdown(
+                                        &result.context_markdown,
+                                    );
                                     if let Err(e) = mem.save() {
-                                        tracing::error!("Failed to save consolidated memory, rolling back: {}", e);
+                                        tracing::error!(
+                                            "Failed to save consolidated memory, rolling back: {}",
+                                            e
+                                        );
                                         mem.terms = old_terms;
                                         mem.context = old_context;
                                     } else {
