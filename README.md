@@ -6,7 +6,9 @@
 
 **The voice input tool Linux has been missing — AI-powered and open source.**
 
-<!-- TODO: Add demo GIF here -->
+> 🎤 Press hotkey → Speak → AI formats → Text appears in your app
+>
+> Demo video coming soon — [contributions welcome!](CONTRIBUTING.md)
 
 ![Settings UI](assets/screenshots/settings.png)
 
