@@ -107,16 +107,10 @@ impl Default for InputConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct DictionaryConfig {
     #[serde(default)]
     pub paths: Vec<String>,
-}
-
-impl Default for DictionaryConfig {
-    fn default() -> Self {
-        Self { paths: vec![] }
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -272,6 +266,7 @@ pub fn resolve_api_key(env_var: &str) -> Result<String> {
 /// Store an API key in the GNOME Keyring via secret-tool.
 ///
 /// Uses attributes `service=koe key=<env_var_name in kebab-case>`.
+#[allow(dead_code)]
 pub fn store_api_key_in_keyring(env_var: &str, secret: &str) -> Result<()> {
     let keyring_key = env_var.to_lowercase().replace('_', "-");
     let mut child = std::process::Command::new("secret-tool")
@@ -344,6 +339,7 @@ impl Config {
     }
 
     /// Resolve the whisper model path (expand ~).
+    #[allow(dead_code)]
     pub fn whisper_model_path(&self) -> Option<PathBuf> {
         self.recognition
             .whisper_local

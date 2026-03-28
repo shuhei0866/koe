@@ -5,6 +5,7 @@ use x11rb::rust_connection::RustConnection;
 
 /// Information about the currently active window.
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct WindowContext {
     pub window_title: String,
     pub app_name: String,

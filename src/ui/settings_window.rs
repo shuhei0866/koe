@@ -583,7 +583,7 @@ fn build_ai_page(
                 item.downcast_ref::<gtk4::StringObject>()
                     .map(|s| s.string())
             })
-            .map_or(false, |s| s == "Other");
+            .is_some_and(|s| s == "Other");
         custom_vis.set_visible(is_other);
     });
 
@@ -859,16 +859,13 @@ fn build_mic_test_page() -> libadwaita::PreferencesPage {
         let mut rec = recorder_clone.borrow_mut();
         if *is_rec {
             if let Some(ref mut r) = *rec {
-                match r.stop() {
-                    Ok(audio_data) => {
-                        let peak = audio_data
-                            .samples
-                            .iter()
-                            .map(|s| s.abs())
-                            .fold(0.0f32, f32::max);
-                        level_bar_clone.set_value(peak as f64);
-                    }
-                    Err(_) => {}
+                if let Ok(audio_data) = r.stop() {
+                    let peak = audio_data
+                        .samples
+                        .iter()
+                        .map(|s| s.abs())
+                        .fold(0.0f32, f32::max);
+                    level_bar_clone.set_value(peak as f64);
                 }
             }
             row.set_subtitle("Press to test mic input level");

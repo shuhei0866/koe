@@ -124,6 +124,7 @@ impl AudioData {
 }
 
 /// Compute the RMS (root mean square) level of an audio chunk.
+#[allow(dead_code)]
 pub fn compute_rms(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;
@@ -270,6 +271,7 @@ impl AudioRecorder {
         })
     }
 
+    #[allow(dead_code)]
     pub fn is_recording(&self) -> bool {
         self.stream.is_some()
     }

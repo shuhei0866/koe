@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::history::{History, SearchQuery};
 
 /// Widget handles needed for signal connection and refresh.
+#[allow(dead_code)]
 pub struct HistoryPageWidgets {
     pub search_entry: gtk4::SearchEntry,
     pub from_entry: gtk4::Entry,
