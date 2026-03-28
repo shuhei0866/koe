@@ -142,7 +142,7 @@ Extract and place the `koe` binary in your `$PATH` (e.g. `~/.local/bin/`). Then 
 ```bash
 sudo apt install -y libasound2-dev libclang-dev libxkbcommon-dev \
   libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake \
-  libgtk-4-dev libadwaita-1-dev
+  libgtk-4-dev libadwaita-1-dev libvulkan-dev
 ```
 
 ### Download Whisper Model
