@@ -5,14 +5,14 @@ mod audio;
 mod config;
 mod context;
 mod daemon;
+mod dbus;
 mod dictionary;
-mod hotkey;
 mod history;
-mod memory;
+mod hotkey;
 mod input;
 mod ipc;
+mod memory;
 mod recognition;
-mod dbus;
 mod sound;
 #[cfg(feature = "gui")]
 mod ui;

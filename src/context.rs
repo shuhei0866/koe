@@ -5,6 +5,7 @@ use x11rb::rust_connection::RustConnection;
 
 /// Information about the currently active window.
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct WindowContext {
     pub window_title: String,
     pub app_name: String,
@@ -87,14 +88,7 @@ fn get_window_name(conn: &RustConnection, window: u32) -> Result<String> {
 
     // Fallback to WM_NAME
     let reply = conn
-        .get_property(
-            false,
-            window,
-            AtomEnum::WM_NAME,
-            AtomEnum::STRING,
-            0,
-            1024,
-        )
+        .get_property(false, window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 1024)
         .context("getting WM_NAME")?
         .reply()?;
 
@@ -103,14 +97,7 @@ fn get_window_name(conn: &RustConnection, window: u32) -> Result<String> {
 
 fn get_wm_class(conn: &RustConnection, window: u32) -> Result<(String, String)> {
     let reply = conn
-        .get_property(
-            false,
-            window,
-            AtomEnum::WM_CLASS,
-            AtomEnum::STRING,
-            0,
-            1024,
-        )
+        .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 1024)
         .context("getting WM_CLASS")?
         .reply()?;
 

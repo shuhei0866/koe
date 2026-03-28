@@ -29,7 +29,11 @@ pub fn list_input_devices() -> Result<Vec<String>> {
                 let card_id = line[bracket_start + 1..bracket_end].trim().to_string();
                 let dash = line.find(" - ")?;
                 let description = line[dash + 3..].trim().to_string();
-                if description.is_empty() { None } else { Some((card_id, description)) }
+                if description.is_empty() {
+                    None
+                } else {
+                    Some((card_id, description))
+                }
             })
             .collect();
 
@@ -87,8 +91,8 @@ impl AudioData {
             let idx_floor = src_idx.floor() as usize;
             let idx_ceil = (idx_floor + 1).min(self.samples.len() - 1);
             let frac = src_idx - idx_floor as f64;
-            let sample =
-                self.samples[idx_floor] as f64 * (1.0 - frac) + self.samples[idx_ceil] as f64 * frac;
+            let sample = self.samples[idx_floor] as f64 * (1.0 - frac)
+                + self.samples[idx_ceil] as f64 * frac;
             resampled.push(sample as f32);
         }
 
@@ -107,8 +111,8 @@ impl AudioData {
 
         let mut cursor = std::io::Cursor::new(Vec::new());
         {
-            let mut writer = hound::WavWriter::new(&mut cursor, spec)
-                .context("creating WAV writer")?;
+            let mut writer =
+                hound::WavWriter::new(&mut cursor, spec).context("creating WAV writer")?;
             for &sample in &samples_16k {
                 let s = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
                 writer.write_sample(s).context("writing WAV sample")?;
@@ -120,6 +124,7 @@ impl AudioData {
 }
 
 /// Compute the RMS (root mean square) level of an audio chunk.
+#[allow(dead_code)]
 pub fn compute_rms(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;
@@ -198,7 +203,11 @@ impl AudioRecorder {
                         sum_sq += mono * mono;
                         count += 1;
                     }
-                    let rms = if count > 0 { (sum_sq / count as f32).sqrt() } else { 0.0 };
+                    let rms = if count > 0 {
+                        (sum_sq / count as f32).sqrt()
+                    } else {
+                        0.0
+                    };
                     let _ = rms_sender.send(rms);
                 },
                 err_fn,
@@ -214,14 +223,17 @@ impl AudioRecorder {
                         let mut sum_sq = 0.0f32;
                         let mut count = 0usize;
                         for chunk in data.chunks(channels) {
-                            let mono: f32 =
-                                chunk.iter().map(|&s| s as f32 / 32768.0).sum::<f32>()
-                                    / channels as f32;
+                            let mono: f32 = chunk.iter().map(|&s| s as f32 / 32768.0).sum::<f32>()
+                                / channels as f32;
                             buf.push(mono);
                             sum_sq += mono * mono;
                             count += 1;
                         }
-                        let rms = if count > 0 { (sum_sq / count as f32).sqrt() } else { 0.0 };
+                        let rms = if count > 0 {
+                            (sum_sq / count as f32).sqrt()
+                        } else {
+                            0.0
+                        };
                         let _ = rms_sender_i16.send(rms);
                     },
                     err_fn,
@@ -259,6 +271,7 @@ impl AudioRecorder {
         })
     }
 
+    #[allow(dead_code)]
     pub fn is_recording(&self) -> bool {
         self.stream.is_some()
     }

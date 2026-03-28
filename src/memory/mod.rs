@@ -152,8 +152,7 @@ impl Memory {
             categories.sort();
             for category in categories {
                 let entries = &self.context.sections[category];
-                let entry_lines: Vec<String> =
-                    entries.iter().map(|e| format!("- {}", e)).collect();
+                let entry_lines: Vec<String> = entries.iter().map(|e| format!("- {}", e)).collect();
                 parts.push(format!("## {}\n{}", category, entry_lines.join("\n")));
             }
         }

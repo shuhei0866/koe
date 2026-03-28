@@ -10,11 +10,7 @@ use crate::config::{
 };
 
 /// Known Claude models shown in the dropdown.
-const CLAUDE_MODELS: &[&str] = &[
-    "claude-sonnet-4-6",
-    "claude-opus-4-6",
-    "claude-haiku-4-5",
-];
+const CLAUDE_MODELS: &[&str] = &["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"];
 
 /// Read the selected model from a ComboRow + custom EntryRow pair.
 /// If the selected item is "Other", returns the custom entry text.
@@ -83,11 +79,17 @@ impl Widgets {
                 engine: ai_engine,
                 claude: Some(ClaudeConfig {
                     api_key_env: self.claude_key_env.text().to_string(),
-                    model: read_model_selection(&self.claude_model_combo, &self.claude_model_custom),
+                    model: read_model_selection(
+                        &self.claude_model_combo,
+                        &self.claude_model_custom,
+                    ),
                 }),
                 ollama: Some(OllamaConfig {
                     host: self.ollama_host.text().to_string(),
-                    model: read_model_selection(&self.ollama_model_combo, &self.ollama_model_custom),
+                    model: read_model_selection(
+                        &self.ollama_model_combo,
+                        &self.ollama_model_custom,
+                    ),
                 }),
             },
             input: InputConfig {
@@ -163,10 +165,7 @@ pub fn build(app: &libadwaita::Application) {
     window.present();
 }
 
-fn save_from_widgets(
-    widgets: &Widgets,
-    window: Option<&libadwaita::PreferencesWindow>,
-) -> bool {
+fn save_from_widgets(widgets: &Widgets, window: Option<&libadwaita::PreferencesWindow>) -> bool {
     let config = widgets.read_config();
     let path = Config::config_path();
     match config.save(&path) {
@@ -320,9 +319,7 @@ fn build_recognition_page(
         .title("Speech Recognition Engine")
         .build();
 
-    let engine_row = libadwaita::ComboRow::builder()
-        .title("Engine")
-        .build();
+    let engine_row = libadwaita::ComboRow::builder().title("Engine").build();
     let engine_list = gtk4::StringList::new(&["Whisper Local", "OpenAI API"]);
     engine_row.set_model(Some(&engine_list));
     let current_engine = match config.recognition.engine {
@@ -338,10 +335,14 @@ fn build_recognition_page(
         .title("Whisper Local")
         .build();
 
-    let wl = config.recognition.whisper_local.clone().unwrap_or(WhisperLocalConfig {
-        model_path: "~/.local/share/koe/models/ggml-large-v3.bin".to_string(),
-        language: "ja".to_string(),
-    });
+    let wl = config
+        .recognition
+        .whisper_local
+        .clone()
+        .unwrap_or(WhisperLocalConfig {
+            model_path: "~/.local/share/koe/models/ggml-large-v3.bin".to_string(),
+            language: "ja".to_string(),
+        });
 
     let model_path_row = libadwaita::EntryRow::builder()
         .title("Model path")
@@ -361,10 +362,14 @@ fn build_recognition_page(
         .title("OpenAI API")
         .build();
 
-    let oa = config.recognition.openai_api.clone().unwrap_or(OpenAiApiConfig {
-        api_key_env: "OPENAI_API_KEY".to_string(),
-        language: "ja".to_string(),
-    });
+    let oa = config
+        .recognition
+        .openai_api
+        .clone()
+        .unwrap_or(OpenAiApiConfig {
+            api_key_env: "OPENAI_API_KEY".to_string(),
+            language: "ja".to_string(),
+        });
 
     let openai_key_row = libadwaita::EntryRow::builder()
         .title("API key env variable")
@@ -392,7 +397,14 @@ fn build_recognition_page(
         update_visibility(row.selected());
     });
 
-    (page, engine_row, model_path_row, whisper_lang_row, openai_key_row, openai_lang_row)
+    (
+        page,
+        engine_row,
+        model_path_row,
+        whisper_lang_row,
+        openai_key_row,
+        openai_lang_row,
+    )
 }
 
 // ─── AI Settings Page ───────────────────────────────────────────────────────
@@ -419,9 +431,7 @@ fn build_ai_page(
         .title("AI Post-Processing Engine")
         .build();
 
-    let engine_row = libadwaita::ComboRow::builder()
-        .title("Engine")
-        .build();
+    let engine_row = libadwaita::ComboRow::builder().title("Engine").build();
     let engine_list = gtk4::StringList::new(&["Claude", "Ollama"]);
     engine_row.set_model(Some(&engine_list));
     let current_engine = match config.ai.engine {
@@ -460,7 +470,10 @@ fn build_ai_page(
         .build();
 
     if is_known_claude {
-        let idx = CLAUDE_MODELS.iter().position(|&m| m == cc.model).unwrap_or(0);
+        let idx = CLAUDE_MODELS
+            .iter()
+            .position(|&m| m == cc.model)
+            .unwrap_or(0);
         claude_model_combo.set_selected(idx as u32);
     } else {
         claude_model_combo.set_selected(CLAUDE_MODELS.len() as u32); // "Other"
@@ -512,7 +525,10 @@ fn build_ai_page(
             match rx.try_recv() {
                 Ok(Ok(response)) => {
                     row_clone.set_subtitle("Test passed!");
-                    window.add_toast(libadwaita::Toast::new(&format!("Claude API OK: {}", response)));
+                    window.add_toast(libadwaita::Toast::new(&format!(
+                        "Claude API OK: {}",
+                        response
+                    )));
                     gtk4::glib::ControlFlow::Break
                 }
                 Ok(Err(e)) => {
@@ -563,8 +579,11 @@ fn build_ai_page(
     ollama_model_combo.connect_selected_notify(move |combo| {
         let is_other = combo
             .selected_item()
-            .and_then(|item| item.downcast_ref::<gtk4::StringObject>().map(|s| s.string()))
-            .map_or(false, |s| s == "Other");
+            .and_then(|item| {
+                item.downcast_ref::<gtk4::StringObject>()
+                    .map(|s| s.string())
+            })
+            .is_some_and(|s| s == "Other");
         custom_vis.set_visible(is_other);
     });
 
@@ -688,8 +707,7 @@ fn build_ai_page(
 // ─── API Test Functions ─────────────────────────────────────────────────────
 
 fn test_claude_api(api_key_env: &str, model: &str) -> Result<String, String> {
-    let api_key = crate::config::resolve_api_key(api_key_env)
-        .map_err(|e| e.to_string())?;
+    let api_key = crate::config::resolve_api_key(api_key_env).map_err(|e| e.to_string())?;
 
     crate::ai::claude::test_connectivity(&api_key, model)
         .map(|text| truncate(&text, 60).to_string())
@@ -727,9 +745,7 @@ fn test_ollama_api(host: &str, model: &str) -> Result<String, String> {
         .json()
         .map_err(|e| format!("Invalid response: {}", e))?;
 
-    let text = resp["response"]
-        .as_str()
-        .unwrap_or("(no response)");
+    let text = resp["response"].as_str().unwrap_or("(no response)");
 
     Ok(truncate(text, 60).to_string())
 }
@@ -843,16 +859,13 @@ fn build_mic_test_page() -> libadwaita::PreferencesPage {
         let mut rec = recorder_clone.borrow_mut();
         if *is_rec {
             if let Some(ref mut r) = *rec {
-                match r.stop() {
-                    Ok(audio_data) => {
-                        let peak = audio_data
-                            .samples
-                            .iter()
-                            .map(|s| s.abs())
-                            .fold(0.0f32, f32::max);
-                        level_bar_clone.set_value(peak as f64);
-                    }
-                    Err(_) => {}
+                if let Ok(audio_data) = r.stop() {
+                    let peak = audio_data
+                        .samples
+                        .iter()
+                        .map(|s| s.abs())
+                        .fold(0.0f32, f32::max);
+                    level_bar_clone.set_value(peak as f64);
                 }
             }
             row.set_subtitle("Press to test mic input level");
@@ -870,9 +883,7 @@ fn build_mic_test_page() -> libadwaita::PreferencesPage {
 
     level_group.add(&test_row);
 
-    let level_action_row = libadwaita::ActionRow::builder()
-        .title("Level")
-        .build();
+    let level_action_row = libadwaita::ActionRow::builder().title("Level").build();
     level_action_row.add_suffix(&level_bar);
     level_group.add(&level_action_row);
 
@@ -894,9 +905,7 @@ fn create_autostart_entry() -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let local_bin = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".local/bin/koe");
+    let local_bin = dirs::home_dir().unwrap_or_default().join(".local/bin/koe");
     let exe = if local_bin.exists() {
         local_bin
     } else {

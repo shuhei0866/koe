@@ -107,16 +107,10 @@ impl Default for InputConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct DictionaryConfig {
     #[serde(default)]
     pub paths: Vec<String>,
-}
-
-impl Default for DictionaryConfig {
-    fn default() -> Self {
-        Self { paths: vec![] }
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -272,17 +266,28 @@ pub fn resolve_api_key(env_var: &str) -> Result<String> {
 /// Store an API key in the GNOME Keyring via secret-tool.
 ///
 /// Uses attributes `service=koe key=<env_var_name in kebab-case>`.
+#[allow(dead_code)]
 pub fn store_api_key_in_keyring(env_var: &str, secret: &str) -> Result<()> {
     let keyring_key = env_var.to_lowercase().replace('_', "-");
     let mut child = std::process::Command::new("secret-tool")
-        .args(["store", "--label", &format!("koe {}", keyring_key), "service", "koe", "key", &keyring_key])
+        .args([
+            "store",
+            "--label",
+            &format!("koe {}", keyring_key),
+            "service",
+            "koe",
+            "key",
+            &keyring_key,
+        ])
         .stdin(std::process::Stdio::piped())
         .spawn()
         .context("launching secret-tool store")?;
 
     if let Some(mut stdin) = child.stdin.take() {
         use std::io::Write;
-        stdin.write_all(secret.as_bytes()).context("writing secret to stdin")?;
+        stdin
+            .write_all(secret.as_bytes())
+            .context("writing secret to stdin")?;
     }
 
     let status = child.wait().context("waiting for secret-tool")?;
@@ -334,6 +339,7 @@ impl Config {
     }
 
     /// Resolve the whisper model path (expand ~).
+    #[allow(dead_code)]
     pub fn whisper_model_path(&self) -> Option<PathBuf> {
         self.recognition
             .whisper_local
@@ -437,7 +443,10 @@ mod tests {
         assert_eq!(loaded.ai.claude.unwrap().model, "claude-sonnet-4-6");
         assert_eq!(loaded.recognition.engine, RecognitionEngine::WhisperLocal);
         assert_eq!(loaded.hotkey.mode, HotkeyMode::PushToTalk);
-        assert_eq!(loaded.memory.consolidation_threshold, default_consolidation_threshold());
+        assert_eq!(
+            loaded.memory.consolidation_threshold,
+            default_consolidation_threshold()
+        );
         assert!(loaded.feedback.sound_enabled);
         assert!(loaded.feedback.indicator_enabled);
 
@@ -584,7 +593,11 @@ api_key_env = "ANTHROPIC_API_KEY"
         //   secret-tool store --label "koe anthropic-api-key" service koe key anthropic-api-key
         std::env::remove_var("ANTHROPIC_API_KEY");
         let result = resolve_api_key("ANTHROPIC_API_KEY");
-        assert!(result.is_ok(), "Expected keyring to have ANTHROPIC_API_KEY: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Expected keyring to have ANTHROPIC_API_KEY: {:?}",
+            result.err()
+        );
         assert!(!result.unwrap().is_empty());
     }
 }

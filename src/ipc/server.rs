@@ -28,7 +28,10 @@ pub async fn start(
     if sock_path.exists() {
         match std::os::unix::net::UnixStream::connect(&sock_path) {
             Ok(_) => {
-                anyhow::bail!("koe daemon is already running (socket {} is active)", sock_path.display());
+                anyhow::bail!(
+                    "koe daemon is already running (socket {} is active)",
+                    sock_path.display()
+                );
             }
             Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
                 // Socket is stale (no listener) — remove and continue
@@ -37,7 +40,11 @@ pub async fn start(
             }
             Err(e) => {
                 // Unexpected error (permission denied, etc.) — do not remove, propagate
-                anyhow::bail!("cannot check existing socket {}: {}", sock_path.display(), e);
+                anyhow::bail!(
+                    "cannot check existing socket {}: {}",
+                    sock_path.display(),
+                    e
+                );
             }
         }
     }

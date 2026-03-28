@@ -11,46 +11,46 @@ jobs:
     name: cargo check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libclang-dev libxkbcommon-dev libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake
-      - run: cargo check
+          sudo apt-get install -y libasound2-dev libclang-dev libxkbcommon-dev libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake libgtk-4-dev libadwaita-1-dev
+      - run: cargo check --locked --no-default-features --features gui
 
   test:
     name: cargo test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libclang-dev libxkbcommon-dev libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake
-      - run: cargo test
+          sudo apt-get install -y libasound2-dev libclang-dev libxkbcommon-dev libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake libgtk-4-dev libadwaita-1-dev
+      - run: cargo test --locked --no-default-features --features gui
 
   clippy:
     name: cargo clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
         with:
           components: clippy
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libclang-dev libxkbcommon-dev libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake
-      - run: cargo clippy -- -D warnings
+          sudo apt-get install -y libasound2-dev libclang-dev libxkbcommon-dev libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake libgtk-4-dev libadwaita-1-dev
+      - run: cargo clippy --locked --no-default-features --features gui -- -D warnings
 
   fmt:
     name: cargo fmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
         with:
           components: rustfmt
       - run: cargo fmt --check

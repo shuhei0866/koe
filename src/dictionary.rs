@@ -111,6 +111,9 @@ mod tests {
         dict.terms
             .insert("クロード".to_string(), "Claude".to_string());
 
-        assert_eq!(dict.apply_terms("ラストでクロードを使う"), "RustでClaudeを使う");
+        assert_eq!(
+            dict.apply_terms("ラストでクロードを使う"),
+            "RustでClaudeを使う"
+        );
     }
 }

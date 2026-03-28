@@ -4,18 +4,15 @@
 /// spawn (e.g. `canberra-gtk-play` is not installed), the error is silently
 /// ignored since sound feedback is a nice-to-have, not critical.
 pub fn play_event(event_id: &str) {
-    match std::process::Command::new("canberra-gtk-play")
+    if let Ok(mut child) = std::process::Command::new("canberra-gtk-play")
         .arg("--id")
         .arg(event_id)
         .spawn()
     {
-        Ok(mut child) => {
-            // Reap the child in a detached thread to prevent zombie accumulation.
-            std::thread::spawn(move || {
-                let _ = child.wait();
-            });
-        }
-        Err(_) => {} // canberra-gtk-play not installed; silently ignore
+        // Reap the child in a detached thread to prevent zombie accumulation.
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
     }
 }
 

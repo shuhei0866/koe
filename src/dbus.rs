@@ -69,7 +69,11 @@ mod tests {
     #[ignore]
     async fn test_dbus_emitter_creation() {
         let emitter = DbusEmitter::new().await;
-        assert!(emitter.is_ok(), "Failed to create DbusEmitter: {:?}", emitter.err());
+        assert!(
+            emitter.is_ok(),
+            "Failed to create DbusEmitter: {:?}",
+            emitter.err()
+        );
     }
 
     /// Verify that emit methods don't panic even without a real bus connection.
