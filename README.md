@@ -2,13 +2,11 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
-[![Linux](https://img.shields.io/badge/Platform-Linux-green.svg)](https://ubuntu.com/)
+[![Linux](https://img.shields.io/badge/Platform-Linux-green.svg)](https://www.linux.org/)
 
 **The voice input tool Linux has been missing — AI-powered and open source.**
 
 > 🎤 Press hotkey → Speak → AI formats → Text appears in your app
->
-> Demo video coming soon — [contributions welcome!](CONTRIBUTING.md)
 
 ![Settings UI](assets/screenshots/settings.png)
 
@@ -31,7 +29,7 @@ macOS has polished voice input tools with AI post-processing, but Linux has had 
 | AI post-processing | Yes (Claude / Ollama) | No | No | — |
 | Context-aware formatting | Yes (active window) | No | No | — |
 | Fully local operation | Yes (whisper.cpp + Ollama) | Yes | No | — |
-| Custom dictionary | Yes | Yes (limited) | No | — |
+| Custom dictionary | Yes (declarative TOML + AI-aware) | Yes (Python scripting) | No | — |
 | Hotkey modes | Push-to-talk + Toggle | Push-to-talk | Button | — |
 | Direct typing to any app | Yes | Yes | Google Docs only | — |
 | Language | Any (Whisper) | Any (Vosk) | Many | — |
@@ -182,7 +180,7 @@ engine = "claude"  # "claude" | "ollama"
 
 [ai.claude]
 api_key_env = "ANTHROPIC_API_KEY"
-model = "claude-sonnet-4-6-20250514"
+model = "claude-sonnet-4-6"
 
 [ai.ollama]
 host = "http://localhost:11434"
