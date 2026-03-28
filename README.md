@@ -128,7 +128,14 @@ stateDiagram-v2
 
 ## Setup
 
-### Dependencies
+### Pre-built Binary
+
+Download the latest pre-built binary from the [Releases page](https://github.com/shuhei0866/koe/releases).
+Extract and place the `koe` binary in your `$PATH` (e.g. `~/.local/bin/`). Then skip to [Download Whisper Model](#download-whisper-model).
+
+### Build from Source
+
+#### Dependencies
 
 ```bash
 sudo apt install -y libasound2-dev libclang-dev libxkbcommon-dev \
@@ -154,7 +161,7 @@ export ANTHROPIC_API_KEY="your-key-here"
 export OPENAI_API_KEY="your-key-here"
 ```
 
-### Build & Run
+#### Build & Run
 
 ```bash
 cargo build --release
