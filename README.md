@@ -8,6 +8,8 @@
 
 > 🎤 Press hotkey → Speak → AI formats → Text appears in your app
 
+![Demo](assets/demo.gif)
+
 ![Settings UI](assets/screenshots/settings.png)
 
 ## Why koe?
