@@ -18,7 +18,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libclang-dev libxkbcommon-dev libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake libgtk-4-dev libadwaita-1-dev libvulkan-dev
+          sudo apt-get install -y libasound2-dev libclang-dev libxkbcommon-dev libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake libgtk-4-dev libadwaita-1-dev libvulkan-dev glslc
       - name: Build release binary
         run: cargo build --release --locked
       - name: Package binary
