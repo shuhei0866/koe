@@ -12,7 +12,7 @@ pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// Read the response body as JSON, enforcing a maximum size limit.
-async fn read_response_json(
+pub(crate) async fn read_response_json(
     response: reqwest::Response,
     max_bytes: usize,
 ) -> Result<serde_json::Value> {

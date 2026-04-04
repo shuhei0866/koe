@@ -100,6 +100,7 @@ impl Widgets {
             memory: Default::default(),
             feedback: Default::default(),
             history: Default::default(),
+            limits: Default::default(),
         }
     }
 }
@@ -167,8 +168,13 @@ pub fn build(app: &libadwaita::Application) {
 }
 
 fn save_from_widgets(widgets: &Widgets, window: Option<&libadwaita::PreferencesWindow>) -> bool {
-    let config = widgets.read_config();
+    let mut config = widgets.read_config();
     let path = Config::config_path();
+    // Preserve fields not exposed in the UI (e.g. context_enabled, limits)
+    if let Ok(existing) = Config::load() {
+        config.ai.context_enabled = existing.ai.context_enabled;
+        config.limits = existing.limits;
+    }
     match config.save(&path) {
         Ok(()) => {
             // Notify daemon to reload (ignore errors — daemon may not be running)
@@ -224,6 +230,7 @@ fn default_config() -> Config {
         memory: Default::default(),
         feedback: Default::default(),
         history: Default::default(),
+        limits: Default::default(),
     }
 }
 

@@ -98,6 +98,60 @@ async fn handle_connection(
     handle_connection_with_limit(stream, tx, DEFAULT_MAX_IPC_MESSAGE_BYTES).await
 }
 
+/// Read a single newline-terminated line into `buf`, reading at most
+/// `max_bytes` before giving up.  Returns `Ok(true)` when a complete
+/// line was read, `Ok(false)` on EOF, and sets `*oversize = true` when
+/// the limit was hit before a newline appeared.
+async fn read_line_limited(
+    reader: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
+    buf: &mut Vec<u8>,
+    max_bytes: usize,
+    oversize: &mut bool,
+) -> std::io::Result<bool> {
+    buf.clear();
+    *oversize = false;
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            return Ok(!buf.is_empty()); // EOF
+        }
+        if let Some(pos) = available.iter().position(|&b| b == b'\n') {
+            let to_consume = pos + 1; // include the newline
+            if buf.len() + to_consume > max_bytes {
+                // Consume everything up to and including the newline so the
+                // stream is positioned at the start of the next message.
+                reader.consume(to_consume);
+                *oversize = true;
+                return Ok(true);
+            }
+            buf.extend_from_slice(&available[..to_consume]);
+            reader.consume(to_consume);
+            return Ok(true);
+        }
+        // No newline yet — consume everything available.
+        let len = available.len();
+        if buf.len() + len > max_bytes {
+            reader.consume(len);
+            *oversize = true;
+            // Drain remaining bytes until newline or EOF.
+            loop {
+                let rest = reader.fill_buf().await?;
+                if rest.is_empty() {
+                    return Ok(true);
+                }
+                if let Some(pos) = rest.iter().position(|&b| b == b'\n') {
+                    reader.consume(pos + 1);
+                    return Ok(true);
+                }
+                let rlen = rest.len();
+                reader.consume(rlen);
+            }
+        }
+        buf.extend_from_slice(available);
+        reader.consume(len);
+    }
+}
+
 async fn handle_connection_with_limit(
     stream: tokio::net::UnixStream,
     tx: mpsc::Sender<IpcRequest>,
@@ -105,26 +159,27 @@ async fn handle_connection_with_limit(
 ) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
-    let mut line = String::new();
+    let mut buf = Vec::new();
+    let mut oversize = false;
 
-    while reader.read_line(&mut line).await? > 0 {
-        if line.len() > max_message_bytes {
+    while read_line_limited(&mut reader, &mut buf, max_message_bytes, &mut oversize).await? {
+        if oversize {
             let response = IpcResponse::Error {
                 message: format!(
-                    "message too large ({} bytes, limit {} bytes)",
-                    line.len(),
+                    "message too large (exceeded limit of {} bytes)",
                     max_message_bytes
                 ),
             };
             let mut resp_json = serde_json::to_string(&response)?;
             resp_json.push('\n');
             writer.write_all(resp_json.as_bytes()).await?;
-            line.clear();
             continue;
         }
+
+        let line = std::str::from_utf8(&buf)
+            .map_err(|e| anyhow::anyhow!("invalid UTF-8 in IPC message: {}", e))?;
         let trimmed = line.trim();
         if trimmed.is_empty() {
-            line.clear();
             continue;
         }
 
@@ -162,8 +217,6 @@ async fn handle_connection_with_limit(
                 writer.write_all(resp_json.as_bytes()).await?;
             }
         }
-
-        line.clear();
     }
 
     Ok(())

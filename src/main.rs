@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
                 config.recognition.engine,
                 config.ai.engine
             );
-            daemon::run_daemon(config).await?;
+            daemon::run_daemon(config, cli.no_context).await?;
         }
         Some(Commands::Settings) => {
             #[cfg(feature = "gui")]
