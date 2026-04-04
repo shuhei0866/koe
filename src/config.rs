@@ -53,6 +53,8 @@ pub struct OpenAiApiConfig {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AiConfig {
     pub engine: AiEngine,
+    #[serde(default = "default_true")]
+    pub context_enabled: bool,
     pub claude: Option<ClaudeConfig>,
     pub ollama: Option<OllamaConfig>,
 }
@@ -373,6 +375,8 @@ impl Config {
     }
 
     pub fn load_from(path: &Path) -> Result<Self> {
+        // Use a generous limit for the config file itself (1 MiB) since we don't
+        // know the user's limits config yet — this is the bootstrap read.
         let content = read_to_string_limited(path, default_max_file_size_bytes() as u64)?;
         let config: Config =
             toml::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
@@ -465,6 +469,7 @@ mod tests {
             },
             ai: AiConfig {
                 engine: AiEngine::Claude,
+                context_enabled: true,
                 claude: Some(ClaudeConfig {
                     api_key_env: "ANTHROPIC_API_KEY".to_string(),
                     model: "claude-sonnet-4-6".to_string(),
@@ -639,6 +644,49 @@ api_key_env = "ANTHROPIC_API_KEY"
     }
 
     #[test]
+    fn test_context_enabled_defaults_to_true() {
+        let toml_str = r#"
+[recognition]
+engine = "whisper_local"
+
+[recognition.whisper_local]
+model_path = "/tmp/model.bin"
+
+[ai]
+engine = "claude"
+
+[ai.claude]
+api_key_env = "ANTHROPIC_API_KEY"
+
+[hotkey]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.ai.context_enabled);
+    }
+
+    #[test]
+    fn test_context_enabled_can_be_disabled() {
+        let toml_str = r#"
+[recognition]
+engine = "whisper_local"
+
+[recognition.whisper_local]
+model_path = "/tmp/model.bin"
+
+[ai]
+engine = "claude"
+context_enabled = false
+
+[ai.claude]
+api_key_env = "ANTHROPIC_API_KEY"
+
+[hotkey]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(!config.ai.context_enabled);
+    }
+
+    #[test]
     fn test_limits_config_defaults() {
         let limits = LimitsConfig::default();
         assert_eq!(limits.max_api_response_bytes, 10 * 1024 * 1024);
@@ -675,13 +723,38 @@ max_file_size_bytes = 524288
     }
 
     #[test]
+    fn test_limits_config_defaults_in_config() {
+        let toml_str = r#"
+[recognition]
+engine = "whisper_local"
+
+[recognition.whisper_local]
+model_path = "/tmp/model.bin"
+
+[ai]
+engine = "claude"
+
+[ai.claude]
+api_key_env = "ANTHROPIC_API_KEY"
+
+[hotkey]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.limits.max_api_response_bytes, 10 * 1024 * 1024);
+        assert_eq!(config.limits.max_ipc_message_bytes, 64 * 1024);
+        assert_eq!(config.limits.max_file_size_bytes, 1024 * 1024);
+    }
+
+    #[test]
     fn test_read_to_string_limited_within_limit() {
         let dir = std::env::temp_dir().join("koe-test-limits");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("small.txt");
         std::fs::write(&path, "hello").unwrap();
+
         let content = read_to_string_limited(&path, 1024).unwrap();
         assert_eq!(content, "hello");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -691,9 +764,11 @@ max_file_size_bytes = 524288
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("big.txt");
         std::fs::write(&path, "a".repeat(200)).unwrap();
+
         let result = read_to_string_limited(&path, 100);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("too large"));
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -703,8 +778,10 @@ max_file_size_bytes = 524288
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("exact.txt");
         std::fs::write(&path, "12345").unwrap();
+
         let content = read_to_string_limited(&path, 5).unwrap();
         assert_eq!(content, "12345");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

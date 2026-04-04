@@ -146,3 +146,33 @@ pub fn create_processor(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_dict() -> Dictionary {
+        Dictionary::load(&[] as &[&str], u64::MAX).unwrap()
+    }
+
+    #[test]
+    fn test_build_system_prompt_with_context() {
+        let ctx = WindowContext {
+            window_title: "main.rs - VS Code".to_string(),
+            app_name: "code".to_string(),
+            window_class: "Code".to_string(),
+        };
+        let prompt = build_system_prompt(&ctx, &empty_dict(), "");
+        assert!(prompt.contains("Window: main.rs - VS Code"));
+        assert!(prompt.contains("Application: code"));
+    }
+
+    #[test]
+    fn test_build_system_prompt_without_context() {
+        let ctx = WindowContext::default();
+        let prompt = build_system_prompt(&ctx, &empty_dict(), "");
+        assert!(!prompt.contains("Current context:"));
+        assert!(!prompt.contains("Window:"));
+        assert!(!prompt.contains("Application:"));
+    }
+}

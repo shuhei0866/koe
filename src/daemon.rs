@@ -109,7 +109,7 @@ async fn notify_state_change(
     }
 }
 
-pub async fn run_daemon(mut config: config::Config) -> Result<()> {
+pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Result<()> {
     // Load memory (auto-learned data)
     let memory_dir = config.memory_dir();
     let mut mem = if config.memory.enabled {
@@ -275,7 +275,12 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                     tracing::warn!("Skipping config reload: state is {} (must be Idle)", state);
                 } else {
                     match config::Config::load() {
-                        Ok(new_config) => {
+                        Ok(mut new_config) => {
+                            // Preserve CLI --no-context override
+                            if cli_no_context {
+                                new_config.ai.context_enabled = false;
+                            }
+
                             // Reload dictionary
                             let dict_paths = new_config.dictionary_paths();
                             match dictionary::Dictionary::load(
@@ -465,8 +470,11 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                             }
 
                             // Get window context before processing
-                            let window_ctx =
-                                context::get_active_window_context().unwrap_or_default();
+                            let window_ctx = if config.ai.context_enabled {
+                                context::get_active_window_context().unwrap_or_default()
+                            } else {
+                                context::WindowContext::default()
+                            };
 
                             // Speech recognition
                             match recognizer.transcribe(&audio_data).await {
