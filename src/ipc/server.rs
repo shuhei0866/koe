@@ -21,6 +21,7 @@ pub fn cleanup_socket() {
 /// Returns a channel receiver for incoming requests.
 pub async fn start(
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    max_ipc_message_bytes: usize,
 ) -> Result<mpsc::Receiver<IpcRequest>> {
     let sock_path = super::socket_path();
 
@@ -69,7 +70,7 @@ pub async fn start(
                         Ok((stream, _)) => {
                             let tx = tx.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection(stream, tx).await {
+                                if let Err(e) = handle_connection_with_limit(stream, tx, max_ipc_message_bytes).await {
                                     tracing::error!("IPC connection error: {}", e);
                                 }
                             });
@@ -86,16 +87,6 @@ pub async fn start(
     });
 
     Ok(rx)
-}
-
-/// Default IPC message size limit (64 KiB) used when no config is available.
-const DEFAULT_MAX_IPC_MESSAGE_BYTES: usize = 64 * 1024;
-
-async fn handle_connection(
-    stream: tokio::net::UnixStream,
-    tx: mpsc::Sender<IpcRequest>,
-) -> Result<()> {
-    handle_connection_with_limit(stream, tx, DEFAULT_MAX_IPC_MESSAGE_BYTES).await
 }
 
 /// Read a single newline-terminated line into `buf`, reading at most
