@@ -11,6 +11,7 @@ language = "ja"
 
 [ai]
 engine = "claude"  # "claude" | "ollama"
+context_enabled = true  # false にするとウィンドウタイトル・アプリ名を AI に送信しない
 
 [ai.claude]
 api_key_env = "ANTHROPIC_API_KEY"

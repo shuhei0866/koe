@@ -12,14 +12,16 @@ pub struct OllamaProcessor {
     host: String,
     model: String,
     client: reqwest::Client,
+    max_response_bytes: usize,
 }
 
 impl OllamaProcessor {
-    pub fn new(config: &OllamaConfig) -> Result<Self> {
+    pub fn new(config: &OllamaConfig, max_response_bytes: usize) -> Result<Self> {
         Ok(Self {
             host: config.host.trim_end_matches('/').to_string(),
             model: config.model.clone(),
             client: reqwest::Client::new(),
+            max_response_bytes,
         })
     }
 }
@@ -59,7 +61,7 @@ impl TextProcessor for OllamaProcessor {
             anyhow::bail!("Ollama API error ({}): {}", status, body);
         }
 
-        let resp: serde_json::Value = response.json().await.context("parsing Ollama response")?;
+        let resp = super::claude::read_response_json(response, self.max_response_bytes).await?;
 
         let text = resp["response"]
             .as_str()

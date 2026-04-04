@@ -119,21 +119,60 @@ pub fn build_consolidation_prompt(memory_content: &str) -> String {
 }
 
 /// Create a text processor based on config.
-pub fn create_processor(config: &AiConfig) -> Result<Box<dyn TextProcessor>> {
+pub fn create_processor(
+    config: &AiConfig,
+    max_response_bytes: usize,
+) -> Result<Box<dyn TextProcessor>> {
     match config.engine {
         AiEngine::Claude => {
             let claude_config = config
                 .claude
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("claude config missing"))?;
-            Ok(Box::new(claude::ClaudeProcessor::new(claude_config)?))
+            Ok(Box::new(claude::ClaudeProcessor::new(
+                claude_config,
+                max_response_bytes,
+            )?))
         }
         AiEngine::Ollama => {
             let ollama_config = config
                 .ollama
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("ollama config missing"))?;
-            Ok(Box::new(ollama::OllamaProcessor::new(ollama_config)?))
+            Ok(Box::new(ollama::OllamaProcessor::new(
+                ollama_config,
+                max_response_bytes,
+            )?))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_dict() -> Dictionary {
+        Dictionary::load(&[] as &[&str], u64::MAX).unwrap()
+    }
+
+    #[test]
+    fn test_build_system_prompt_with_context() {
+        let ctx = WindowContext {
+            window_title: "main.rs - VS Code".to_string(),
+            app_name: "code".to_string(),
+            window_class: "Code".to_string(),
+        };
+        let prompt = build_system_prompt(&ctx, &empty_dict(), "");
+        assert!(prompt.contains("Window: main.rs - VS Code"));
+        assert!(prompt.contains("Application: code"));
+    }
+
+    #[test]
+    fn test_build_system_prompt_without_context() {
+        let ctx = WindowContext::default();
+        let prompt = build_system_prompt(&ctx, &empty_dict(), "");
+        assert!(!prompt.contains("Current context:"));
+        assert!(!prompt.contains("Window:"));
+        assert!(!prompt.contains("Application:"));
     }
 }

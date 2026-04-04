@@ -20,10 +20,12 @@ pub struct HistoryPageWidgets {
 pub fn build_history_page(config: &Config) -> (libadwaita::PreferencesPage, HistoryPageWidgets) {
     let history_dir = config.history_dir();
     let max_entries = config.history.max_entries;
-    let history = History::load(&history_dir, max_entries).unwrap_or_else(|_| {
+    let max_file_bytes = config.limits.max_file_size_bytes as u64;
+    let history = History::load(&history_dir, max_entries, max_file_bytes).unwrap_or_else(|_| {
         History::load(
             &std::env::temp_dir().join("koe-history-fallback"),
             max_entries,
+            max_file_bytes,
         )
         .unwrap_or_else(|_| panic!("Failed to load history"))
     });

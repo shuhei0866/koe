@@ -11,20 +11,50 @@ use super::{build_system_prompt, ConsolidationResult, Learning, ProcessResult, T
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 
+/// Read the response body as JSON, enforcing a maximum size limit.
+pub(crate) async fn read_response_json(
+    response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<serde_json::Value> {
+    if let Some(len) = response.content_length() {
+        if len > max_bytes as u64 {
+            anyhow::bail!(
+                "API response too large (Content-Length: {} bytes, limit: {} bytes)",
+                len,
+                max_bytes
+            );
+        }
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .context("reading API response body")?;
+    if bytes.len() > max_bytes {
+        anyhow::bail!(
+            "API response too large ({} bytes, limit: {} bytes)",
+            bytes.len(),
+            max_bytes
+        );
+    }
+    serde_json::from_slice(&bytes).context("parsing API response JSON")
+}
+
 pub struct ClaudeProcessor {
     api_key: String,
     model: String,
     client: reqwest::Client,
+    max_response_bytes: usize,
 }
 
 impl ClaudeProcessor {
-    pub fn new(config: &ClaudeConfig) -> Result<Self> {
+    pub fn new(config: &ClaudeConfig, max_response_bytes: usize) -> Result<Self> {
         let api_key = crate::config::resolve_api_key(&config.api_key_env)?;
 
         Ok(Self {
             api_key,
             model: config.model.clone(),
             client: reqwest::Client::new(),
+            max_response_bytes,
         })
     }
 }
@@ -305,7 +335,7 @@ impl TextProcessor for ClaudeProcessor {
             anyhow::bail!("Claude API error ({}): {}", status, body);
         }
 
-        let resp: serde_json::Value = response.json().await.context("parsing Claude response")?;
+        let resp = read_response_json(response, self.max_response_bytes).await?;
         let result = parse_process_result(&resp)?;
 
         tracing::info!(
@@ -347,10 +377,7 @@ impl TextProcessor for ClaudeProcessor {
             anyhow::bail!("Claude consolidation error ({}): {}", status, body);
         }
 
-        let resp: serde_json::Value = response
-            .json()
-            .await
-            .context("parsing consolidation response")?;
+        let resp = read_response_json(response, self.max_response_bytes).await?;
         let text = parse_response_text(&resp)?;
 
         let result = parse_consolidation_response(&text)?;

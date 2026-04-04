@@ -30,7 +30,9 @@ pub struct Dictionary {
 
 impl Dictionary {
     /// Load and merge all dictionary files from the given paths.
-    pub fn load(paths: &[impl AsRef<Path>]) -> Result<Self> {
+    ///
+    /// `max_file_bytes` sets the maximum allowed size per dictionary file.
+    pub fn load(paths: &[impl AsRef<Path>], max_file_bytes: u64) -> Result<Self> {
         let mut merged = Dictionary::default();
 
         for path in paths {
@@ -39,8 +41,7 @@ impl Dictionary {
                 tracing::warn!("Dictionary file not found, skipping: {}", path.display());
                 continue;
             }
-            let content = std::fs::read_to_string(path)
-                .with_context(|| format!("reading dictionary {}", path.display()))?;
+            let content = crate::config::read_to_string_limited(path, max_file_bytes)?;
             let dict_file: DictionaryFile = toml::from_str(&content)
                 .with_context(|| format!("parsing dictionary {}", path.display()))?;
 
