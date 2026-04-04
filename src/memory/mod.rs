@@ -33,7 +33,8 @@ impl Memory {
     ///
     /// If the directory does not exist, returns a Memory with default (empty) values.
     /// If individual files are missing or empty, they are treated as empty.
-    pub fn load(dir: &Path) -> Result<Self> {
+    /// `max_file_bytes` limits the size of each file read.
+    pub fn load(dir: &Path, max_file_bytes: u64) -> Result<Self> {
         let mut memory = Self {
             terms: HashMap::new(),
             context: MemoryContext::default(),
@@ -47,8 +48,7 @@ impl Memory {
         // Load terms.toml
         let terms_path = dir.join("terms.toml");
         if terms_path.exists() {
-            let content = std::fs::read_to_string(&terms_path)
-                .with_context(|| format!("reading {}", terms_path.display()))?;
+            let content = crate::config::read_to_string_limited(&terms_path, max_file_bytes)?;
             if !content.trim().is_empty() {
                 let terms_file: TermsFile = toml::from_str(&content)
                     .with_context(|| format!("parsing {}", terms_path.display()))?;
@@ -59,8 +59,7 @@ impl Memory {
         // Load context.md
         let context_path = dir.join("context.md");
         if context_path.exists() {
-            let content = std::fs::read_to_string(&context_path)
-                .with_context(|| format!("reading {}", context_path.display()))?;
+            let content = crate::config::read_to_string_limited(&context_path, max_file_bytes)?;
             memory.context = Self::parse_context_markdown(&content);
         }
 
@@ -222,13 +221,13 @@ mod tests {
     #[test]
     fn test_terms_roundtrip() {
         let dir = test_dir("terms_roundtrip");
-        let mut mem = Memory::load(&dir).unwrap();
+        let mut mem = Memory::load(&dir, u64::MAX).unwrap();
 
         mem.add_term("ラスト", "Rust");
         mem.add_term("クロード", "Claude");
         mem.save().unwrap();
 
-        let loaded = Memory::load(&dir).unwrap();
+        let loaded = Memory::load(&dir, u64::MAX).unwrap();
         assert_eq!(loaded.terms.get("ラスト").unwrap(), "Rust");
         assert_eq!(loaded.terms.get("クロード").unwrap(), "Claude");
         assert_eq!(loaded.terms.len(), 2);
@@ -239,7 +238,7 @@ mod tests {
     #[test]
     fn test_context_roundtrip() {
         let dir = test_dir("context_roundtrip");
-        let mut mem = Memory::load(&dir).unwrap();
+        let mut mem = Memory::load(&dir, u64::MAX).unwrap();
 
         mem.add_context(
             "user_profile",
@@ -248,7 +247,7 @@ mod tests {
         mem.add_context("domain", "ソフトウェア開発、Linux デスクトップ環境");
         mem.save().unwrap();
 
-        let loaded = Memory::load(&dir).unwrap();
+        let loaded = Memory::load(&dir, u64::MAX).unwrap();
         assert_eq!(loaded.context.sections.len(), 2);
         assert_eq!(
             loaded.context.sections["user_profile"],
@@ -265,7 +264,7 @@ mod tests {
     #[test]
     fn test_add_term_dedup() {
         let dir = test_dir("term_dedup");
-        let mut mem = Memory::load(&dir).unwrap();
+        let mut mem = Memory::load(&dir, u64::MAX).unwrap();
 
         mem.add_term("ラスト", "Rust");
         mem.add_term("ラスト", "Rust Language");
@@ -279,7 +278,7 @@ mod tests {
     #[test]
     fn test_add_context_dedup() {
         let dir = test_dir("context_dedup");
-        let mut mem = Memory::load(&dir).unwrap();
+        let mut mem = Memory::load(&dir, u64::MAX).unwrap();
 
         mem.add_context("user_profile", "Rust エンジニア");
         mem.add_context("user_profile", "Rust エンジニア");
@@ -297,7 +296,7 @@ mod tests {
     #[test]
     fn test_format_for_prompt() {
         let dir = test_dir("format_prompt");
-        let mut mem = Memory::load(&dir).unwrap();
+        let mut mem = Memory::load(&dir, u64::MAX).unwrap();
 
         mem.add_term("ラスト", "Rust");
         mem.add_term("クロード", "Claude");
@@ -327,7 +326,7 @@ mod tests {
             .join("nonexistent-dir-that-does-not-exist-12345");
         let _ = std::fs::remove_dir_all(&dir);
 
-        let mem = Memory::load(&dir).unwrap();
+        let mem = Memory::load(&dir, u64::MAX).unwrap();
         assert!(mem.terms.is_empty());
         assert!(mem.context.sections.is_empty());
     }
@@ -335,7 +334,7 @@ mod tests {
     #[test]
     fn test_format_for_whisper_hint() {
         let dir = test_dir("whisper_hint");
-        let mut mem = Memory::load(&dir).unwrap();
+        let mut mem = Memory::load(&dir, u64::MAX).unwrap();
         mem.add_term("ラスト", "Rust");
         mem.add_term("クロード", "Claude");
         mem.add_term("コエ", "koe");
@@ -349,7 +348,7 @@ mod tests {
     #[test]
     fn test_total_entries() {
         let dir = test_dir("total_entries");
-        let mut mem = Memory::load(&dir).unwrap();
+        let mut mem = Memory::load(&dir, u64::MAX).unwrap();
         assert_eq!(mem.total_entries(), 0);
 
         mem.add_term("a", "A");
@@ -363,14 +362,14 @@ mod tests {
     #[test]
     fn test_format_for_whisper_hint_empty() {
         let dir = test_dir("whisper_hint_empty");
-        let mem = Memory::load(&dir).unwrap();
+        let mem = Memory::load(&dir, u64::MAX).unwrap();
         assert_eq!(mem.format_for_whisper_hint(), "");
     }
 
     #[test]
     fn test_needs_consolidation() {
         let dir = test_dir("needs_consolidation");
-        let mut mem = Memory::load(&dir).unwrap();
+        let mut mem = Memory::load(&dir, u64::MAX).unwrap();
         assert!(!mem.needs_consolidation(3));
 
         mem.add_term("a", "A");
@@ -391,7 +390,7 @@ mod tests {
         std::fs::write(dir.join("terms.toml"), "").unwrap();
         std::fs::write(dir.join("context.md"), "").unwrap();
 
-        let mem = Memory::load(&dir).unwrap();
+        let mem = Memory::load(&dir, u64::MAX).unwrap();
         assert!(mem.terms.is_empty());
         assert!(mem.context.sections.is_empty());
 

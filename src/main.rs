@@ -23,6 +23,10 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "koe", about = "Ubuntu voice input system", version)]
 struct Cli {
+    /// Disable context awareness (don't send window title/app name to AI)
+    #[arg(long)]
+    no_context: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -49,7 +53,11 @@ async fn main() -> Result<()> {
         None => {
             // Default: run daemon
             tracing::info!("koe - Ubuntu Voice Input System starting...");
-            let config = config::Config::load().context("loading config")?;
+            let mut config = config::Config::load().context("loading config")?;
+            // CLI --no-context overrides config
+            if cli.no_context {
+                config.ai.context_enabled = false;
+            }
             tracing::info!(
                 "Config loaded: recognition={:?}, ai={:?}",
                 config.recognition.engine,

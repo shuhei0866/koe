@@ -77,6 +77,7 @@ impl Widgets {
             },
             ai: AiConfig {
                 engine: ai_engine,
+                context_enabled: true,
                 claude: Some(ClaudeConfig {
                     api_key_env: self.claude_key_env.text().to_string(),
                     model: read_model_selection(
@@ -202,6 +203,7 @@ fn default_config() -> Config {
         },
         ai: AiConfig {
             engine: AiEngine::Claude,
+            context_enabled: true,
             claude: Some(ClaudeConfig {
                 api_key_env: "ANTHROPIC_API_KEY".to_string(),
                 model: "claude-sonnet-4-6".to_string(),

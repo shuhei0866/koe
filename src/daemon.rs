@@ -113,7 +113,8 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
     // Load memory (auto-learned data)
     let memory_dir = config.memory_dir();
     let mut mem = if config.memory.enabled {
-        memory::Memory::load(&memory_dir).context("loading memory")?
+        memory::Memory::load(&memory_dir, config.limits.max_file_size_bytes as u64)
+            .context("loading memory")?
     } else {
         memory::Memory::default()
     };
@@ -125,7 +126,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
 
     // Load history (transcription log)
     let mut history: Option<History> = if config.history.enabled {
-        match History::load(&config.history_dir(), config.history.max_entries) {
+        match History::load(&config.history_dir(), config.history.max_entries, config.limits.max_file_size_bytes as u64) {
             Ok(h) => {
                 tracing::info!("History loaded: {} entries", h.entries.len());
                 Some(h)
@@ -143,7 +144,8 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
     // Load dictionaries
     let dict_paths = config.dictionary_paths();
     let mut dictionary =
-        dictionary::Dictionary::load(&dict_paths).context("loading dictionaries")?;
+        dictionary::Dictionary::load(&dict_paths, config.limits.max_file_size_bytes as u64)
+            .context("loading dictionaries")?;
 
     // Initialize speech recognizer
     let mut recognizer =
@@ -271,7 +273,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                         Ok(new_config) => {
                             // Reload dictionary
                             let dict_paths = new_config.dictionary_paths();
-                            match dictionary::Dictionary::load(&dict_paths) {
+                            match dictionary::Dictionary::load(&dict_paths, new_config.limits.max_file_size_bytes as u64) {
                                 Ok(new_dict) => {
                                     dictionary = new_dict;
                                     tracing::info!("Dictionary reloaded");
@@ -312,7 +314,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                             // Reload memory
                             if new_config.memory.enabled {
                                 let new_memory_dir = new_config.memory_dir();
-                                match memory::Memory::load(&new_memory_dir) {
+                                match memory::Memory::load(&new_memory_dir, new_config.limits.max_file_size_bytes as u64) {
                                     Ok(new_mem) => {
                                         mem = new_mem;
                                         tracing::info!("Memory reloaded");
@@ -449,8 +451,11 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
                             }
 
                             // Get window context before processing
-                            let window_ctx =
-                                context::get_active_window_context().unwrap_or_default();
+                            let window_ctx = if config.ai.context_enabled {
+                                context::get_active_window_context().unwrap_or_default()
+                            } else {
+                                context::WindowContext::default()
+                            };
 
                             // Speech recognition
                             match recognizer.transcribe(&audio_data).await {

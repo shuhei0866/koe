@@ -44,13 +44,13 @@ impl History {
     ///
     /// Blank lines and lines that fail to parse are silently skipped.
     /// If the file does not exist, returns an empty History.
-    pub fn load(dir: &Path, max_entries: usize) -> Result<Self> {
+    /// `max_file_bytes` limits the history file size that will be loaded.
+    pub fn load(dir: &Path, max_entries: usize, max_file_bytes: u64) -> Result<Self> {
         let mut entries = Vec::new();
 
         let file_path = dir.join("history.jsonl");
         if file_path.exists() {
-            let content = std::fs::read_to_string(&file_path)
-                .with_context(|| format!("reading {}", file_path.display()))?;
+            let content = crate::config::read_to_string_limited(&file_path, max_file_bytes)?;
             for line in content.lines() {
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn test_load_nonexistent_dir() {
         let dir = test_dir("load_nonexistent");
-        let h = History::load(&dir, 100).unwrap();
+        let h = History::load(&dir, 100, u64::MAX).unwrap();
         assert!(h.entries.is_empty());
         cleanup(&dir);
     }
@@ -268,7 +268,7 @@ mod tests {
     #[test]
     fn test_add_entry_creates_dir_and_persists() {
         let dir = test_dir("add_creates_dir");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
 
         h.add_entry("hello world", "Hello World").unwrap();
 
@@ -276,7 +276,7 @@ mod tests {
         assert!(dir.join("history.jsonl").exists());
 
         // Reload and verify.
-        let h2 = History::load(&dir, 100).unwrap();
+        let h2 = History::load(&dir, 100, u64::MAX).unwrap();
         assert_eq!(h2.entries.len(), 1);
         assert_eq!(h2.entries[0].raw_text, "hello world");
         assert_eq!(h2.entries[0].processed_text, "Hello World");
@@ -287,13 +287,13 @@ mod tests {
     #[test]
     fn test_roundtrip_multiple_entries() {
         let dir = test_dir("roundtrip_multi");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
 
         h.add_entry("first", "First").unwrap();
         h.add_entry("second", "Second").unwrap();
         h.add_entry("third", "Third").unwrap();
 
-        let h2 = History::load(&dir, 100).unwrap();
+        let h2 = History::load(&dir, 100, u64::MAX).unwrap();
         assert_eq!(h2.entries.len(), 3);
         assert_eq!(h2.entries[0].raw_text, "first");
         assert_eq!(h2.entries[2].raw_text, "third");
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn test_entry_id_is_uuid() {
         let dir = test_dir("uuid_id");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
         let entry = h.add_entry("test", "Test").unwrap();
         // Must parse as a valid UUID.
         uuid::Uuid::parse_str(&entry.id).expect("id should be a valid UUID");
@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn test_ids_are_unique() {
         let dir = test_dir("unique_ids");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
         h.add_entry("a", "A").unwrap();
         h.add_entry("b", "B").unwrap();
         h.add_entry("c", "C").unwrap();
@@ -334,7 +334,7 @@ mod tests {
     #[test]
     fn test_max_entries_trim() {
         let dir = test_dir("max_entries");
-        let mut h = History::load(&dir, 3).unwrap();
+        let mut h = History::load(&dir, 3, u64::MAX).unwrap();
 
         h.add_entry("one", "one").unwrap();
         h.add_entry("two", "two").unwrap();
@@ -346,7 +346,7 @@ mod tests {
         assert_eq!(h.entries[2].raw_text, "four");
 
         // Reload and verify persistence.
-        let h2 = History::load(&dir, 3).unwrap();
+        let h2 = History::load(&dir, 3, u64::MAX).unwrap();
         assert_eq!(h2.entries.len(), 3);
         assert_eq!(h2.entries[0].raw_text, "two");
 
@@ -356,7 +356,7 @@ mod tests {
     #[test]
     fn test_max_entries_zero_returns_error() {
         let dir = test_dir("max_entries_zero");
-        let mut h = History::load(&dir, 0).unwrap();
+        let mut h = History::load(&dir, 0, u64::MAX).unwrap();
 
         let result = h.add_entry("should fail", "should fail");
         assert!(result.is_err());
@@ -368,7 +368,7 @@ mod tests {
     #[test]
     fn test_max_entries_one() {
         let dir = test_dir("max_entries_one");
-        let mut h = History::load(&dir, 1).unwrap();
+        let mut h = History::load(&dir, 1, u64::MAX).unwrap();
 
         h.add_entry("first", "first").unwrap();
         h.add_entry("second", "second").unwrap();
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn test_delete_entry() {
         let dir = test_dir("delete_entry");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
 
         h.add_entry("keep", "keep").unwrap();
         let id_to_delete = {
@@ -403,7 +403,7 @@ mod tests {
         assert!(h.entries.iter().all(|e| e.id != id_to_delete));
 
         // Verify persisted.
-        let h2 = History::load(&dir, 100).unwrap();
+        let h2 = History::load(&dir, 100, u64::MAX).unwrap();
         assert_eq!(h2.entries.len(), 2);
         assert!(h2.entries.iter().all(|e| e.id != id_to_delete));
 
@@ -413,7 +413,7 @@ mod tests {
     #[test]
     fn test_delete_nonexistent_returns_false() {
         let dir = test_dir("delete_nonexistent");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
         h.add_entry("something", "something").unwrap();
 
         let removed = h.delete_entry("nonexistent-id").unwrap();
@@ -430,7 +430,7 @@ mod tests {
     #[test]
     fn test_clear() {
         let dir = test_dir("clear");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
 
         h.add_entry("a", "a").unwrap();
         h.add_entry("b", "b").unwrap();
@@ -438,7 +438,7 @@ mod tests {
         h.clear().unwrap();
         assert!(h.entries.is_empty());
 
-        let h2 = History::load(&dir, 100).unwrap();
+        let h2 = History::load(&dir, 100, u64::MAX).unwrap();
         assert!(h2.entries.is_empty());
 
         cleanup(&dir);
@@ -451,7 +451,7 @@ mod tests {
     #[test]
     fn test_search_no_filter_returns_all_newest_first() {
         let dir = test_dir("search_no_filter");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
 
         h.add_entry("first", "first processed").unwrap();
         h.add_entry("second", "second processed").unwrap();
@@ -468,7 +468,7 @@ mod tests {
     #[test]
     fn test_search_text_partial_match_raw() {
         let dir = test_dir("search_text_raw");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
 
         h.add_entry("hello world", "Hi there").unwrap();
         h.add_entry("goodbye", "See you").unwrap();
@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn test_search_text_partial_match_processed() {
         let dir = test_dir("search_text_processed");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
 
         h.add_entry("raw one", "processed alpha").unwrap();
         h.add_entry("raw two", "processed beta").unwrap();
@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn test_search_text_case_insensitive() {
         let dir = test_dir("search_case");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
 
         h.add_entry("Hello World", "Hello World").unwrap();
 
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn test_search_text_no_match() {
         let dir = test_dir("search_no_match");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
 
         h.add_entry("foo bar", "foo bar").unwrap();
 
@@ -546,7 +546,7 @@ mod tests {
     #[test]
     fn test_search_date_range_from() {
         let dir = test_dir("search_date_from");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
 
         // Inject entries with explicit timestamps.
         let t1 = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
@@ -588,7 +588,7 @@ mod tests {
     #[test]
     fn test_search_date_range_to() {
         let dir = test_dir("search_date_to");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
 
         let t1 = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
         let t2 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
@@ -620,7 +620,7 @@ mod tests {
     #[test]
     fn test_search_date_range_from_and_to() {
         let dir = test_dir("search_date_from_to");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
 
         for year in [2023u32, 2024, 2025] {
             h.entries.push(HistoryEntry {
@@ -645,7 +645,7 @@ mod tests {
     #[test]
     fn test_search_combined_text_and_date() {
         let dir = test_dir("search_combined");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
 
         let t1 = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
         let t2 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
@@ -699,7 +699,7 @@ mod tests {
         let content = format!("\n{}\n\n\n", line);
         std::fs::write(dir.join("history.jsonl"), content).unwrap();
 
-        let h = History::load(&dir, 100).unwrap();
+        let h = History::load(&dir, 100, u64::MAX).unwrap();
         assert_eq!(h.entries.len(), 1);
         assert_eq!(h.entries[0].raw_text, "valid");
 
@@ -721,7 +721,7 @@ mod tests {
         let content = format!("{}\ncorrupt{{not json\n{}\n", good, good);
         std::fs::write(dir.join("history.jsonl"), content).unwrap();
 
-        let h = History::load(&dir, 100).unwrap();
+        let h = History::load(&dir, 100, u64::MAX).unwrap();
         assert_eq!(h.entries.len(), 2);
 
         cleanup(&dir);
@@ -734,7 +734,7 @@ mod tests {
     #[test]
     fn test_export_csv_header_and_rows() {
         let dir = test_dir("export_csv");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
         h.add_entry("raw text", "processed text").unwrap();
 
         let mut buf = Vec::new();
@@ -751,7 +751,7 @@ mod tests {
     #[test]
     fn test_export_csv_empty() {
         let dir = test_dir("export_csv_empty");
-        let h = History::load(&dir, 100).unwrap();
+        let h = History::load(&dir, 100, u64::MAX).unwrap();
 
         let mut buf = Vec::new();
         h.export_csv(&mut buf).unwrap();
@@ -768,7 +768,7 @@ mod tests {
     #[test]
     fn test_export_csv_comma_in_field() {
         let dir = test_dir("export_csv_comma");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
         h.add_entry("hello, world", "hi, there").unwrap();
 
         let mut buf = Vec::new();
@@ -788,7 +788,7 @@ mod tests {
     #[test]
     fn test_export_json_empty() {
         let dir = test_dir("export_json_empty");
-        let h = History::load(&dir, 100).unwrap();
+        let h = History::load(&dir, 100, u64::MAX).unwrap();
 
         let json = h.export_json().unwrap();
         let parsed: Vec<HistoryEntry> = serde_json::from_str(&json).unwrap();
@@ -800,7 +800,7 @@ mod tests {
     #[test]
     fn test_export_json_roundtrip() {
         let dir = test_dir("export_json_roundtrip");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
         h.add_entry("raw", "processed").unwrap();
 
         let json = h.export_json().unwrap();
@@ -815,7 +815,7 @@ mod tests {
     #[test]
     fn test_export_json_multiple_entries() {
         let dir = test_dir("export_json_multi");
-        let mut h = History::load(&dir, 100).unwrap();
+        let mut h = History::load(&dir, 100, u64::MAX).unwrap();
         h.add_entry("a", "A").unwrap();
         h.add_entry("b", "B").unwrap();
         h.add_entry("c", "C").unwrap();
