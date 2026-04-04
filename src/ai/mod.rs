@@ -119,21 +119,30 @@ pub fn build_consolidation_prompt(memory_content: &str) -> String {
 }
 
 /// Create a text processor based on config.
-pub fn create_processor(config: &AiConfig) -> Result<Box<dyn TextProcessor>> {
+pub fn create_processor(
+    config: &AiConfig,
+    max_response_bytes: usize,
+) -> Result<Box<dyn TextProcessor>> {
     match config.engine {
         AiEngine::Claude => {
             let claude_config = config
                 .claude
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("claude config missing"))?;
-            Ok(Box::new(claude::ClaudeProcessor::new(claude_config)?))
+            Ok(Box::new(claude::ClaudeProcessor::new(
+                claude_config,
+                max_response_bytes,
+            )?))
         }
         AiEngine::Ollama => {
             let ollama_config = config
                 .ollama
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("ollama config missing"))?;
-            Ok(Box::new(ollama::OllamaProcessor::new(ollama_config)?))
+            Ok(Box::new(ollama::OllamaProcessor::new(
+                ollama_config,
+                max_response_bytes,
+            )?))
         }
     }
 }

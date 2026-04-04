@@ -88,15 +88,41 @@ pub async fn start(
     Ok(rx)
 }
 
+/// Default IPC message size limit (64 KiB).
+const DEFAULT_MAX_IPC_MESSAGE_BYTES: usize = 64 * 1024;
+
 async fn handle_connection(
     stream: tokio::net::UnixStream,
     tx: mpsc::Sender<IpcRequest>,
+) -> Result<()> {
+    handle_connection_with_limit(stream, tx, DEFAULT_MAX_IPC_MESSAGE_BYTES).await
+}
+
+async fn handle_connection_with_limit(
+    stream: tokio::net::UnixStream,
+    tx: mpsc::Sender<IpcRequest>,
+    max_message_bytes: usize,
 ) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
 
     while reader.read_line(&mut line).await? > 0 {
+        if line.len() > max_message_bytes {
+            let response = IpcResponse::Error {
+                message: format!(
+                    "message too large ({} bytes, limit {} bytes)",
+                    line.len(),
+                    max_message_bytes
+                ),
+            };
+            let mut resp_json = serde_json::to_string(&response)?;
+            resp_json.push('\n');
+            writer.write_all(resp_json.as_bytes()).await?;
+            line.clear();
+            continue;
+        }
+
         let trimmed = line.trim();
         if trimmed.is_empty() {
             line.clear();

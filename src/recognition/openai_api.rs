@@ -7,11 +7,15 @@ use crate::config::OpenAiApiConfig;
 
 use super::SpeechRecognizer;
 
+/// Default max response size for transcription API (10 MiB).
+const DEFAULT_MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+
 pub struct OpenAiRecognizer {
     api_key: String,
     language: String,
     client: reqwest::Client,
     prompt_hint: String,
+    max_response_bytes: usize,
 }
 
 impl OpenAiRecognizer {
@@ -23,6 +27,7 @@ impl OpenAiRecognizer {
             language: config.language.clone(),
             client: reqwest::Client::new(),
             prompt_hint: String::new(),
+            max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
         })
     }
 }
@@ -66,8 +71,27 @@ impl SpeechRecognizer for OpenAiRecognizer {
             anyhow::bail!("OpenAI API error ({}): {}", status, body);
         }
 
-        let text = response.text().await.context("reading response body")?;
-        let text = text.trim().to_string();
+        if let Some(len) = response.content_length() {
+            if len > self.max_response_bytes as u64 {
+                anyhow::bail!(
+                    "OpenAI response too large (Content-Length: {} bytes, limit: {} bytes)",
+                    len,
+                    self.max_response_bytes
+                );
+            }
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .context("reading response body")?;
+        if bytes.len() > self.max_response_bytes {
+            anyhow::bail!(
+                "OpenAI response too large ({} bytes, limit: {} bytes)",
+                bytes.len(),
+                self.max_response_bytes
+            );
+        }
+        let text = String::from_utf8_lossy(&bytes).trim().to_string();
 
         tracing::info!("OpenAI transcription: {}", text);
         Ok(text)
