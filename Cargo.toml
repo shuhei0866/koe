@@ -22,7 +22,7 @@ clap = { version = "4", features = ["derive"] }
 cpal = "0.15"
 
 # Speech recognition - local
-whisper-rs = "0.15"
+whisper-rs = "0.16"
 
 # HTTP client (for OpenAI API, Claude API, Ollama) - use rustls to avoid libssl-dev
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "blocking"] }
