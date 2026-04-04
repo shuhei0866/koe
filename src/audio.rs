@@ -14,7 +14,7 @@ pub fn list_input_devices() -> Result<Vec<String>> {
     let input_names: Vec<String> = host
         .input_devices()
         .context("listing input devices")?
-        .filter_map(|d| d.name().ok())
+        .filter_map(|d| d.description().ok().map(|desc| desc.name().to_string()))
         .collect();
 
     // Try to resolve friendly names from /proc/asound/cards
@@ -165,13 +165,17 @@ impl AudioRecorder {
             .default_input_device()
             .context("no input device available")?;
 
-        tracing::info!("Using input device: {}", device.name().unwrap_or_default());
+        let device_name = device
+            .description()
+            .map(|d| d.name().to_string())
+            .unwrap_or_default();
+        tracing::info!("Using input device: {}", device_name);
 
         let config = device
             .default_input_config()
             .context("no default input config")?;
 
-        self.sample_rate = config.sample_rate().0;
+        self.sample_rate = config.sample_rate();
         tracing::info!(
             "Recording at {} Hz, {} channels",
             self.sample_rate,

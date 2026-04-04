@@ -19,10 +19,10 @@ async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
 
 # Audio capture
-cpal = "0.15"
+cpal = "0.17"
 
 # Speech recognition - local
-whisper-rs = "0.15"
+whisper-rs = "0.16"
 
 # HTTP client (for OpenAI API, Claude API, Ollama) - use rustls to avoid libssl-dev
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "blocking"] }
@@ -31,7 +31,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "mul
 rdev = "0.5"
 
 # Keyboard input simulation
-enigo = { version = "0.2", features = ["x11rb"] }
+enigo = { version = "0.6", features = ["x11rb"] }
 
 # X11 window info
 x11rb = { version = "0.13", features = ["all-extensions"] }
@@ -42,7 +42,7 @@ arboard = "3"
 # Serialization / config
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
+toml = "0.9"
 
 # URL parsing
 url = "2"
