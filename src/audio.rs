@@ -171,7 +171,7 @@ impl AudioRecorder {
             .default_input_config()
             .context("no default input config")?;
 
-        self.sample_rate = config.sample_rate().0;
+        self.sample_rate = config.sample_rate();
         tracing::info!(
             "Recording at {} Hz, {} channels",
             self.sample_rate,
