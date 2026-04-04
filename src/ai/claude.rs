@@ -32,7 +32,11 @@ pub(crate) async fn read_response_json(
 
     // Stream chunks, enforcing the limit incrementally.
     let mut buf = Vec::new();
-    while let Some(chunk) = response.chunk().await.context("reading API response chunk")? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .context("reading API response chunk")?
+    {
         if buf.len() + chunk.len() > max_bytes {
             anyhow::bail!(
                 "API response too large (exceeded limit of {} bytes)",

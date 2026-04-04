@@ -80,10 +80,7 @@ impl SpeechRecognizer for OpenAiRecognizer {
                 );
             }
         }
-        let bytes = response
-            .bytes()
-            .await
-            .context("reading response body")?;
+        let bytes = response.bytes().await.context("reading response body")?;
         if bytes.len() > self.max_response_bytes {
             anyhow::bail!(
                 "OpenAI response too large ({} bytes, limit: {} bytes)",

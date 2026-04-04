@@ -99,6 +99,7 @@ impl Widgets {
             memory: Default::default(),
             feedback: Default::default(),
             history: Default::default(),
+            limits: Default::default(),
         }
     }
 }
@@ -222,6 +223,7 @@ fn default_config() -> Config {
         memory: Default::default(),
         feedback: Default::default(),
         history: Default::default(),
+        limits: Default::default(),
     }
 }
 
