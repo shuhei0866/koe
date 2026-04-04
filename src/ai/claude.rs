@@ -12,10 +12,14 @@ pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// Read the response body as JSON, enforcing a maximum size limit.
+///
+/// Uses chunk-based streaming so that a response without Content-Length
+/// cannot cause unbounded memory allocation before the size check.
 pub(crate) async fn read_response_json(
-    response: reqwest::Response,
+    mut response: reqwest::Response,
     max_bytes: usize,
 ) -> Result<serde_json::Value> {
+    // Fast-reject when Content-Length is available.
     if let Some(len) = response.content_length() {
         if len > max_bytes as u64 {
             anyhow::bail!(
@@ -25,18 +29,20 @@ pub(crate) async fn read_response_json(
             );
         }
     }
-    let bytes = response
-        .bytes()
-        .await
-        .context("reading API response body")?;
-    if bytes.len() > max_bytes {
-        anyhow::bail!(
-            "API response too large ({} bytes, limit: {} bytes)",
-            bytes.len(),
-            max_bytes
-        );
+
+    // Stream chunks, enforcing the limit incrementally.
+    let mut buf = Vec::new();
+    while let Some(chunk) = response.chunk().await.context("reading API response chunk")? {
+        if buf.len() + chunk.len() > max_bytes {
+            anyhow::bail!(
+                "API response too large (exceeded limit of {} bytes)",
+                max_bytes
+            );
+        }
+        buf.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&bytes).context("parsing API response JSON")
+
+    serde_json::from_slice(&buf).context("parsing API response JSON")
 }
 
 pub struct ClaudeProcessor {

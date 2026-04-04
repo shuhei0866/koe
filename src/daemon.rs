@@ -194,7 +194,7 @@ pub async fn run_daemon(mut config: config::Config) -> Result<()> {
     }
 
     // Start IPC server
-    let ipc_rx = ipc::server::start(shutdown_rx.clone())
+    let ipc_rx = ipc::server::start(shutdown_rx.clone(), config.limits.max_ipc_message_bytes)
         .await
         .context("starting IPC server")?;
 

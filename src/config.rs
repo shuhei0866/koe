@@ -260,18 +260,22 @@ fn default_max_entries() -> usize {
 }
 
 /// Read a file into a String, rejecting files larger than `max_bytes`.
+///
+/// Reads the raw bytes first and checks the actual size to avoid TOCTOU
+/// races between a metadata check and the subsequent read.
 pub fn read_to_string_limited(path: &Path, max_bytes: u64) -> Result<String> {
-    let metadata = std::fs::metadata(path)
-        .with_context(|| format!("reading metadata of {}", path.display()))?;
-    if metadata.len() > max_bytes {
+    let bytes =
+        std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    if bytes.len() as u64 > max_bytes {
         anyhow::bail!(
             "file {} is too large ({} bytes, limit {} bytes)",
             path.display(),
-            metadata.len(),
+            bytes.len(),
             max_bytes,
         );
     }
-    std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
+    String::from_utf8(bytes)
+        .map_err(|e| anyhow::anyhow!("file {} is not valid UTF-8: {}", path.display(), e))
 }
 
 /// Expand ~ and environment variables in a path string.
