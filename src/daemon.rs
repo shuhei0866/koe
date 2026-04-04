@@ -126,7 +126,11 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
 
     // Load history (transcription log)
     let mut history: Option<History> = if config.history.enabled {
-        match History::load(&config.history_dir(), config.history.max_entries, config.limits.max_file_size_bytes as u64) {
+        match History::load(
+            &config.history_dir(),
+            config.history.max_entries,
+            config.limits.max_file_size_bytes as u64,
+        ) {
             Ok(h) => {
                 tracing::info!("History loaded: {} entries", h.entries.len());
                 Some(h)
@@ -279,7 +283,10 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
 
                             // Reload dictionary
                             let dict_paths = new_config.dictionary_paths();
-                            match dictionary::Dictionary::load(&dict_paths, new_config.limits.max_file_size_bytes as u64) {
+                            match dictionary::Dictionary::load(
+                                &dict_paths,
+                                new_config.limits.max_file_size_bytes as u64,
+                            ) {
                                 Ok(new_dict) => {
                                     dictionary = new_dict;
                                     tracing::info!("Dictionary reloaded");
@@ -323,7 +330,10 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                             // Reload memory
                             if new_config.memory.enabled {
                                 let new_memory_dir = new_config.memory_dir();
-                                match memory::Memory::load(&new_memory_dir, new_config.limits.max_file_size_bytes as u64) {
+                                match memory::Memory::load(
+                                    &new_memory_dir,
+                                    new_config.limits.max_file_size_bytes as u64,
+                                ) {
                                     Ok(new_mem) => {
                                         mem = new_mem;
                                         tracing::info!("Memory reloaded");

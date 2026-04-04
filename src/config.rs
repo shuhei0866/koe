@@ -266,8 +266,7 @@ fn default_max_entries() -> usize {
 /// Reads the raw bytes first and checks the actual size to avoid TOCTOU
 /// races between a metadata check and the subsequent read.
 pub fn read_to_string_limited(path: &Path, max_bytes: u64) -> Result<String> {
-    let bytes =
-        std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     if bytes.len() as u64 > max_bytes {
         anyhow::bail!(
             "file {} is too large ({} bytes, limit {} bytes)",
