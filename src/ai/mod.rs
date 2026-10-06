@@ -31,6 +31,8 @@ pub struct ConsolidationResult {
 }
 
 /// Trait for AI text post-processing.
+// `double_must_use` fires inside async-trait's generated code (fixed in async-trait 0.1.92).
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait TextProcessor: Send + Sync {
     async fn process(

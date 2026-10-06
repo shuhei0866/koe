@@ -187,7 +187,7 @@ impl History {
             .collect();
 
         // Return newest-first.
-        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        results.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
         results
     }
 

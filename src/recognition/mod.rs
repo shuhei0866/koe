@@ -8,6 +8,8 @@ use crate::audio::AudioData;
 use crate::config::{RecognitionConfig, RecognitionEngine};
 
 /// Trait for speech recognition engines.
+// `double_must_use` fires inside async-trait's generated code (fixed in async-trait 0.1.92).
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait SpeechRecognizer: Send + Sync {
     async fn transcribe(&self, audio: &AudioData) -> Result<String>;

@@ -78,11 +78,11 @@ pub fn start_hotkey_listener(
                     }
                 }
             },
-            EventType::KeyRelease(key) if key == target_key => {
-                if mode == HotkeyMode::PushToTalk && is_recording {
-                    is_recording = false;
-                    let _ = tx.send(HotkeyEvent::RecordStop);
-                }
+            EventType::KeyRelease(key)
+                if key == target_key && mode == HotkeyMode::PushToTalk && is_recording =>
+            {
+                is_recording = false;
+                let _ = tx.send(HotkeyEvent::RecordStop);
             }
             _ => {}
         };
