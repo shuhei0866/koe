@@ -101,12 +101,23 @@ pub enum HotkeyMode {
 pub struct InputConfig {
     #[serde(default = "default_input_method")]
     pub method: String,
+    #[serde(default)]
+    pub wayland_paste_shortcut: WaylandPasteShortcut,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum WaylandPasteShortcut {
+    #[default]
+    CtrlV,
+    CtrlShiftV,
 }
 
 impl Default for InputConfig {
     fn default() -> Self {
         Self {
             method: default_input_method(),
+            wayland_paste_shortcut: WaylandPasteShortcut::default(),
         }
     }
 }
@@ -428,6 +439,18 @@ impl Config {
 mod tests {
     use super::*;
     #[test]
+    fn legacy_input_config_defaults_to_gui_paste_and_preserves_terminal_choice() {
+        let legacy: InputConfig = toml::from_str("method = 'direct_type'").unwrap();
+        assert_eq!(legacy.wayland_paste_shortcut, WaylandPasteShortcut::CtrlV);
+        let terminal: InputConfig =
+            toml::from_str("wayland_paste_shortcut = 'ctrl_shift_v'").unwrap();
+        assert_eq!(
+            terminal.wayland_paste_shortcut,
+            WaylandPasteShortcut::CtrlShiftV
+        );
+        assert!(toml::from_str::<InputConfig>("wayland_paste_shortcut = 'Enter'").is_err());
+    }
+    #[test]
     fn test_resolve_api_key_from_env() {
         // Set a temporary env var
         std::env::set_var("KOE_TEST_API_KEY_12345", "test-secret-value");
@@ -482,6 +505,7 @@ mod tests {
             },
             input: InputConfig {
                 method: "direct_type".to_string(),
+                ..Default::default()
             },
             dictionaries: DictionaryConfig { paths: vec![] },
             memory: MemoryConfig::default(),

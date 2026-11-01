@@ -14,6 +14,9 @@ pub struct WindowContext {
 
 /// Capture context from the active X11 window.
 pub fn get_active_window_context() -> Result<WindowContext> {
+    if crate::portal::is_wayland() {
+        return Ok(WindowContext::default());
+    }
     let (conn, screen_num) = RustConnection::connect(None).context("connecting to X11")?;
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;

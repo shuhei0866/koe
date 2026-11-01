@@ -20,6 +20,9 @@ const TERMINAL_CLASSES: &[&str] = &[
 /// Call this before showing overlays (e.g. indicator window) to preserve
 /// the real target window for later paste operations.
 pub fn capture_active_window() -> Option<String> {
+    if crate::portal::is_wayland() {
+        return None;
+    }
     let output = std::process::Command::new("xdotool")
         .arg("getactivewindow")
         .output()
@@ -50,7 +53,10 @@ fn is_window_terminal(window_id: &str) -> bool {
 }
 
 /// Type text into the active window using xdotool.
-pub fn type_text(text: &str) -> Result<()> {
+pub async fn type_text(text: &str) -> Result<()> {
+    if crate::portal::is_wayland() {
+        return crate::portal::paste_text(text, Default::default()).await;
+    }
     if text.is_empty() {
         return Ok(());
     }
@@ -72,7 +78,14 @@ pub fn type_text(text: &str) -> Result<()> {
 /// Type text using clipboard paste via xclip + xdotool.
 /// Uses a pre-captured window ID to determine terminal vs GUI paste key.
 /// If `target_window` is None, falls back to detecting the current active window.
-pub fn paste_text(text: &str, target_window: Option<&str>) -> Result<()> {
+pub async fn paste_text(
+    text: &str,
+    target_window: Option<&str>,
+    options: &crate::config::InputConfig,
+) -> Result<()> {
+    if crate::portal::is_wayland() {
+        return crate::portal::paste_text(text, options.wayland_paste_shortcut).await;
+    }
     if text.is_empty() {
         return Ok(());
     }

@@ -27,6 +27,12 @@ mod indicator_bridge {
         if !enabled {
             return None;
         }
+        // GNOME has no layer-shell protocol for a non-activating overlay.
+        // A normal Wayland toplevel can take focus from the intended input.
+        if crate::portal::is_wayland() {
+            tracing::info!("Wayland recording overlay disabled to preserve input focus");
+            return None;
+        }
         let (tx, rx) = async_channel::bounded::<IndicatorMsg>(64);
         std::thread::Builder::new()
             .name("indicator-gtk".into())
@@ -165,10 +171,6 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
     let mut recorder = audio::AudioRecorder::new().context("creating audio recorder")?;
     let rms_rx = recorder.rms_receiver();
 
-    // Start hotkey listener
-    let hotkey_rx = hotkey::start_hotkey_listener(config.hotkey.mode.clone(), &config.hotkey.key)
-        .context("starting hotkey listener")?;
-
     // Create shutdown channel
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
@@ -201,6 +203,10 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
     let ipc_rx = ipc::server::start(shutdown_rx.clone(), config.limits.max_ipc_message_bytes)
         .await
         .context("starting IPC server")?;
+
+    // Start hotkey listener
+    let hotkey_rx = hotkey::start_hotkey_listener(config.hotkey.mode.clone(), &config.hotkey.key)
+        .context("starting hotkey listener")?;
 
     // Initialize D-Bus emitter for state notifications
     let dbus_emitter = match dbus::DbusEmitter::new().await {
@@ -246,11 +252,15 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
         tracing::info!("Whisper hint set: {} terms", mem.terms.len());
     }
 
-    tracing::info!(
-        "Ready! Press {} to start/stop recording (mode: {:?})",
-        config.hotkey.key,
-        config.hotkey.mode
-    );
+    if crate::portal::is_wayland() {
+        tracing::info!("Daemon running; waiting for Wayland shortcut authorization");
+    } else {
+        tracing::info!(
+            "Ready! Press {} to start/stop recording (mode: {:?})",
+            config.hotkey.key,
+            config.hotkey.mode
+        );
+    }
 
     let mut state = AppState::Idle;
     let mut last_consolidation_entry_count: usize = 0;
@@ -582,13 +592,20 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                                             if let Err(e) = input::paste_text(
                                                 &result.text,
                                                 active_window_id.as_deref(),
-                                            ) {
+                                                &config.input,
+                                            )
+                                            .await
+                                            {
                                                 tracing::error!("Failed to paste text: {}", e);
-                                                if let Err(e2) = input::type_text(&result.text) {
-                                                    tracing::error!(
-                                                        "Direct type also failed: {}",
-                                                        e2
-                                                    );
+                                                if !crate::portal::is_wayland() {
+                                                    if let Err(e2) =
+                                                        input::type_text(&result.text).await
+                                                    {
+                                                        tracing::error!(
+                                                            "Direct type also failed: {}",
+                                                            e2
+                                                        );
+                                                    }
                                                 }
                                             }
                                         }
@@ -621,7 +638,9 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                                             let _ = input::paste_text(
                                                 &corrected,
                                                 active_window_id.as_deref(),
-                                            );
+                                                &config.input,
+                                            )
+                                            .await;
                                         }
                                     }
                                 }
