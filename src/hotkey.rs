@@ -49,6 +49,20 @@ pub fn start_hotkey_listener(
     key_name: &str,
 ) -> Result<mpsc::Receiver<HotkeyEvent>> {
     let (tx, rx) = mpsc::channel();
+    if crate::portal::is_wayland() {
+        let key = key_name.to_string();
+        tokio::spawn(async move {
+            let keep_alive = tx.clone();
+            if let Err(error) = crate::portal::run_hotkeys(mode, key, tx).await {
+                tracing::error!("Wayland voice input unavailable: {}", error);
+                // A refusal must not trigger systemd's Restart=always and
+                // another permission dialog. Retry only on an explicit restart.
+                std::future::pending::<()>().await;
+            }
+            drop(keep_alive);
+        });
+        return Ok(rx);
+    }
     let target_key = parse_key(key_name)?;
 
     tracing::info!(

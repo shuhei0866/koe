@@ -12,6 +12,7 @@ mod hotkey;
 mod input;
 mod ipc;
 mod memory;
+mod portal;
 mod recognition;
 mod sound;
 #[cfg(feature = "gui")]

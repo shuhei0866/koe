@@ -133,7 +133,14 @@ stateDiagram-v2
 ### Pre-built Binary
 
 Download the latest pre-built binary from the [Releases page](https://github.com/shuhei0866/koe/releases).
-Extract and place the `koe` binary in your `$PATH` (e.g. `~/.local/bin/`). Then skip to [Download Whisper Model](#download-whisper-model).
+Extract and place the `koe` binary in your `$PATH` (e.g. `~/.local/bin/`). On Wayland, also install the included desktop identity before starting Koe:
+
+```bash
+desktop-file-install --dir="$HOME/.local/share/applications" \
+  --set-key=Exec --set-value="$(command -v koe)" io.github.shuhei0866.koe.desktop
+```
+
+Then skip to [Download Whisper Model](#download-whisper-model).
 
 ### Build from Source
 
@@ -142,8 +149,28 @@ Extract and place the `koe` binary in your `$PATH` (e.g. `~/.local/bin/`). Then 
 ```bash
 sudo apt install -y libasound2-dev libclang-dev libxkbcommon-dev \
   libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake \
-  libgtk-4-dev libadwaita-1-dev libvulkan-dev
+  libgtk-4-dev libadwaita-1-dev libvulkan-dev glslc
 ```
+
+### GNOME Wayland (Ubuntu 26.04)
+
+Koe uses the standard GlobalShortcuts and RemoteDesktop/Clipboard portals. Unlock the desktop before the first authorization. At startup, approve keyboard control and clipboard access, then the dictation shortcut, in the desktop dialogs. Koe requests no screen or pointer access and never reads existing clipboard contents. Permission is session-only; restarting Koe asks again. X11 continues to use its existing input backend.
+
+When building from source, install the desktop identity first:
+
+```bash
+desktop-file-install --dir="$HOME/.local/share/applications" \
+  --set-key=Exec --set-value="$(pwd)/target/release/koe" data/io.github.shuhei0866.koe.desktop
+```
+
+Keep the intended text field focused while dictating. Japanese and multiline text are pasted through the clipboard; the transcript replaces the clipboard contents. The default paste shortcut is Ctrl+V. For terminal applications that require Ctrl+Shift+V, set this in `config.toml`:
+
+```toml
+[input]
+wayland_paste_shortcut = "ctrl_shift_v"
+```
+
+Use `"ctrl_v"` for GUI applications. Automatic terminal detection and active-window context are unavailable on Wayland. The floating recording indicator is disabled to preserve the target's focus; sound feedback and history remain available. Declining or revoking a portal permission stops voice input until an explicit Koe restart, without repeated prompts or an X11 fallback.
 
 ### Download Whisper Model
 

@@ -24,7 +24,7 @@ jobs:
       - name: Package binary
         run: |
           ARCHIVE="koe-${GITHUB_REF_NAME}-linux-x86_64.tar.gz"
-          tar -czf "$ARCHIVE" -C target/release koe
+          tar -czf "$ARCHIVE" -C target/release koe -C "$GITHUB_WORKSPACE/data" io.github.shuhei0866.koe.desktop
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
           sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
       - name: Create GitHub Release

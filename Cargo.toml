@@ -1,6 +1,6 @@
 [package]
 name = "koe"
-version = "0.4.2"
+version = "0.6.0"
 edition = "2021"
 description = "Ubuntu voice input system powered by Whisper + AI post-processing"
 
@@ -77,3 +77,7 @@ gtk4 = { version = "0.9", features = ["v4_6"], optional = true }
 libadwaita = { version = "0.7", features = ["v1_4", "gtk_v4_6"], optional = true }
 ksni = { version = "0.3", optional = true }
 async-channel = { version = "2", optional = true }
+
+# Desktop portals for GNOME Wayland shortcuts and keyboard-only input
+ashpd = { version = "0.13", default-features = false, features = ["tokio", "global_shortcuts", "remote_desktop", "screencast", "clipboard"] }
+futures-util = "0.3"

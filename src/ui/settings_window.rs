@@ -33,6 +33,7 @@ fn read_model_selection(combo: &libadwaita::ComboRow, custom: &libadwaita::Entry
 
 /// All widget handles needed to read settings on save.
 struct Widgets {
+    input_config: InputConfig,
     hotkey_mode: libadwaita::ComboRow,
     hotkey_key: libadwaita::EntryRow,
     rec_engine: libadwaita::ComboRow,
@@ -98,9 +99,7 @@ impl Widgets {
                     ),
                 }),
             },
-            input: InputConfig {
-                method: "direct_type".to_string(),
-            },
+            input: self.input_config.clone(),
             dictionaries: DictionaryConfig { paths: vec![] },
             memory: Default::default(),
             feedback: Default::default(),
@@ -145,6 +144,7 @@ pub fn build(app: &libadwaita::Application) {
     window.add(&history_page);
 
     let widgets = Rc::new(Widgets {
+        input_config: config.input.clone(),
         hotkey_mode,
         hotkey_key,
         rec_engine,
@@ -230,6 +230,7 @@ fn default_config() -> Config {
         },
         input: InputConfig {
             method: "direct_type".to_string(),
+            ..Default::default()
         },
         dictionaries: DictionaryConfig { paths: vec![] },
         memory: Default::default(),
