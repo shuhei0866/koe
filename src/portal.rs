@@ -387,9 +387,11 @@ async fn shortcut_events(
     key: &str,
     sender: mpsc::Sender<HotkeyEvent>,
 ) -> Result<()> {
-    let session_id = serde_json::to_value(session)?;
-    let mut activated = portal.receive_activated().await?;
-    let mut deactivated = portal.receive_deactivated().await?;
+    let session_id: String = serde_json::from_value(serde_json::to_value(session)?)?;
+    // One subscription preserves D-Bus arrival order. Selecting between two
+    // per-member streams can observe a queued release before its press.
+    let conn = connection().await?;
+    let mut signals = ordered_shortcut_signals(conn).await?;
     let mut closed = session.receive_closed().await?;
     let mut keyboard_closed = keyboard.session.receive_closed().await?;
     tracing::info!("Waiting for Wayland voice shortcut permission");
@@ -404,16 +406,13 @@ async fn shortcut_events(
     let mut state = ShortcutState::default();
     loop {
         let pressed = tokio::select! {
-            event = activated.next() => match event {
-                Some(event) if event.shortcut_id() == SHORTCUT_ID
-                    && session_id.as_str() == Some(event.session_handle().as_str()) => true,
-                Some(_) => continue,
-                None => break,
-            },
-            event = deactivated.next() => match event {
-                Some(event) if event.shortcut_id() == SHORTCUT_ID
-                    && session_id.as_str() == Some(event.session_handle().as_str()) => false,
-                Some(_) => continue,
+            signal = signals.next() => match signal {
+                Some(Ok(message)) => match shortcut_signal(&message, &session_id) {
+                    Ok(Some(pressed)) => pressed,
+                    Ok(None) => continue,
+                    Err(error) => { tracing::warn!("Invalid Wayland shortcut signal: {error}"); break; }
+                },
+                Some(Err(error)) => { tracing::warn!("Wayland shortcut connection failed: {error}"); break; },
                 None => break,
             },
             _ = closed.next() => break,
@@ -431,9 +430,177 @@ async fn shortcut_events(
     anyhow::bail!("Wayland shortcut session closed; restart Koe to reconnect")
 }
 
+async fn ordered_shortcut_signals(conn: &zbus::Connection) -> Result<zbus::MessageStream> {
+    let bus = zbus::fdo::DBusProxy::new(conn).await?;
+    let owner = bus
+        .get_name_owner("org.freedesktop.portal.Desktop".try_into()?)
+        .await?;
+    let rule = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .sender(owner.as_str())?
+        .path("/org/freedesktop/portal/desktop")?
+        .interface("org.freedesktop.portal.GlobalShortcuts")?
+        .build();
+    Ok(zbus::MessageStream::for_match_rule(rule, conn, Some(64)).await?)
+}
+
+fn shortcut_signal(message: &zbus::Message, session_id: &str) -> Result<Option<bool>> {
+    let header = message.header();
+    let pressed = match header.member().map(|member| member.as_str()) {
+        Some("Activated") => true,
+        Some("Deactivated") => false,
+        _ => return Ok(None),
+    };
+    let (session, shortcut, _timestamp, _options): (
+        zbus::zvariant::OwnedObjectPath,
+        String,
+        u64,
+        HashMap<String, zbus::zvariant::OwnedValue>,
+    ) = message.body().deserialize()?;
+    Ok((session.as_str() == session_id && shortcut == SHORTCUT_ID).then_some(pressed))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn dbus_subscription_keeps_a_queued_press_before_its_release() {
+        use std::{
+            io::{BufRead, BufReader},
+            process::{Child, Command, Stdio},
+        };
+        struct PrivateBus {
+            child: Child,
+            dir: std::path::PathBuf,
+        }
+        impl Drop for PrivateBus {
+            fn drop(&mut self) {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                let _ = std::fs::remove_dir_all(&self.dir);
+            }
+        }
+        let dir = std::env::temp_dir().join(format!("koe-shortcut-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let child = Command::new("dbus-daemon")
+            .args([
+                "--session",
+                "--nofork",
+                "--print-address=1",
+                &format!("--address=unix:dir={}", dir.display()),
+            ])
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("dbus-daemon is a test dependency");
+        let mut bus = PrivateBus { child, dir };
+        let mut address = String::new();
+        BufReader::new(bus.child.stdout.take().unwrap())
+            .read_line(&mut address)
+            .unwrap();
+        let server = zbus::connection::Builder::address(address.trim())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        server
+            .request_name("org.freedesktop.portal.Desktop")
+            .await
+            .unwrap();
+        let client = zbus::connection::Builder::address(address.trim())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let mut signals = ordered_shortcut_signals(&client).await.unwrap();
+        const SESSION: &str = "/org/freedesktop/portal/desktop/session/test";
+        // Queue the complete burst before polling the receiver. This also
+        // checks the sender match and the real wire signature on a private bus.
+        for member in ["Activated", "Deactivated", "Activated", "Deactivated"] {
+            server
+                .emit_signal(
+                    None::<&str>,
+                    "/org/freedesktop/portal/desktop",
+                    "org.freedesktop.portal.GlobalShortcuts",
+                    member,
+                    &(
+                        zbus::zvariant::OwnedObjectPath::try_from(SESSION).unwrap(),
+                        SHORTCUT_ID,
+                        42u64,
+                        HashMap::<String, zbus::zvariant::OwnedValue>::new(),
+                    ),
+                )
+                .await
+                .unwrap();
+        }
+        for expected in [true, false, true, false] {
+            let message = tokio::time::timeout(Duration::from_secs(5), signals.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert_eq!(shortcut_signal(&message, SESSION).unwrap(), Some(expected));
+        }
+    }
+
+    fn signal(member: &str, session: &str, shortcut: &str) -> zbus::Message {
+        zbus::Message::signal(
+            "/org/freedesktop/portal/desktop",
+            "org.freedesktop.portal.GlobalShortcuts",
+            member,
+        )
+        .unwrap()
+        .build(&(
+            zbus::zvariant::OwnedObjectPath::try_from(session).unwrap(),
+            shortcut,
+            42u64,
+            HashMap::<String, zbus::zvariant::OwnedValue>::new(),
+        ))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn queued_press_release_bursts_keep_both_edges_in_order() {
+        const SESSION: &str = "/org/freedesktop/portal/desktop/session/test";
+        for (mode, count) in [(HotkeyMode::PushToTalk, 4), (HotkeyMode::Toggle, 2)] {
+            let mut signals = futures_util::stream::iter([
+                signal("Activated", SESSION, SHORTCUT_ID),
+                signal("Deactivated", SESSION, SHORTCUT_ID),
+                signal("Activated", SESSION, SHORTCUT_ID),
+                signal("Deactivated", SESSION, SHORTCUT_ID),
+            ]);
+            let mut state = ShortcutState::default();
+            let mut events = Vec::new();
+            while let Some(message) = signals.next().await {
+                if let Some(pressed) = shortcut_signal(&message, SESSION).unwrap() {
+                    if let Some(event) = state.event(&mode, pressed) {
+                        events.push(event);
+                    }
+                }
+            }
+            assert_eq!(events.len(), count);
+            assert!(matches!(events[0], HotkeyEvent::RecordStart));
+            assert!(matches!(events[count - 1], HotkeyEvent::RecordStop));
+            assert!(!state.recording);
+        }
+    }
+
+    #[test]
+    fn shortcut_signals_from_other_sessions_or_actions_are_ignored() {
+        const SESSION: &str = "/org/freedesktop/portal/desktop/session/test";
+        assert_eq!(
+            shortcut_signal(&signal("Activated", "/other", SHORTCUT_ID), SESSION).unwrap(),
+            None
+        );
+        assert_eq!(
+            shortcut_signal(&signal("Activated", SESSION, "other"), SESSION).unwrap(),
+            None
+        );
+        assert_eq!(
+            shortcut_signal(&signal("Deactivated", SESSION, SHORTCUT_ID), SESSION).unwrap(),
+            Some(false)
+        );
+    }
     #[test]
     fn explicit_x11_session_does_not_request_portal_permissions() {
         assert!(!wayland_session(Some("x11"), Some("stale-wayland-0")));
