@@ -15,7 +15,7 @@ context_enabled = true  # false にするとウィンドウタイトル・アプ
 
 [ai.claude]
 api_key_env = "ANTHROPIC_API_KEY"
-model = "claude-sonnet-4-6-20250514"
+model = "claude-sonnet-5-5"
 
 [ai.ollama]
 host = "http://localhost:11434"

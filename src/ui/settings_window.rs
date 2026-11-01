@@ -10,7 +10,12 @@ use crate::config::{
 };
 
 /// Known Claude models shown in the dropdown.
-const CLAUDE_MODELS: &[&str] = &["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"];
+const CLAUDE_MODELS: &[&str] = &[
+    "claude-sonnet-5-5",
+    "claude-sonnet-4-6",
+    "claude-opus-4-6",
+    "claude-haiku-4-5",
+];
 
 /// Read the selected model from a ComboRow + custom EntryRow pair.
 /// If the selected item is "Other", returns the custom entry text.
@@ -212,7 +217,7 @@ fn default_config() -> Config {
             context_enabled: true,
             claude: Some(ClaudeConfig {
                 api_key_env: "ANTHROPIC_API_KEY".to_string(),
-                model: "claude-sonnet-4-6".to_string(),
+                model: "claude-sonnet-5-5".to_string(),
             }),
             ollama: Some(OllamaConfig {
                 host: "http://localhost:11434".to_string(),
@@ -459,7 +464,7 @@ fn build_ai_page(
 
     let cc = config.ai.claude.clone().unwrap_or(ClaudeConfig {
         api_key_env: "ANTHROPIC_API_KEY".to_string(),
-        model: "claude-sonnet-4-6".to_string(),
+        model: "claude-sonnet-5-5".to_string(),
     });
 
     let claude_key_row = libadwaita::EntryRow::builder()

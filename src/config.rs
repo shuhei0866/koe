@@ -225,7 +225,7 @@ fn default_anthropic_key_env() -> String {
     "ANTHROPIC_API_KEY".to_string()
 }
 fn default_claude_model() -> String {
-    "claude-sonnet-4-6".to_string()
+    "claude-sonnet-5-5".to_string()
 }
 fn default_ollama_host() -> String {
     "http://localhost:11434".to_string()
@@ -534,7 +534,7 @@ api_key_env = "ANTHROPIC_API_KEY"
         // Defaults should be applied
         assert_eq!(config.hotkey.mode, HotkeyMode::PushToTalk);
         assert_eq!(config.hotkey.key, "Super_R");
-        assert_eq!(config.ai.claude.unwrap().model, "claude-sonnet-4-6");
+        assert_eq!(config.ai.claude.unwrap().model, "claude-sonnet-5-5");
         assert_eq!(config.input.method, "direct_type");
         // feedback should have defaults
         assert!(config.feedback.sound_enabled);
