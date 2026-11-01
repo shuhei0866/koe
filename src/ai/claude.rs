@@ -63,7 +63,10 @@ impl ClaudeProcessor {
         Ok(Self {
             api_key,
             model: config.model.clone(),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .context("building Claude HTTP client")?,
             max_response_bytes,
         })
     }
@@ -565,6 +568,10 @@ mod exchange_tests {
                 }
                 requests
                     .push(serde_json::from_slice(&bytes[header_end..header_end + length]).unwrap());
+                if status == 0 {
+                    std::thread::sleep(Duration::from_millis(500));
+                    continue;
+                }
                 let body = response.to_string();
                 write!(stream, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
             }
@@ -673,6 +680,31 @@ mod exchange_tests {
             )
             .await;
         assert!(result.is_err());
+        assert_eq!(server.join().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn stalled_followup_times_out_without_returning_learnings() {
+        let (endpoint, server) = mock_api(vec![(200, tool_turn()), (0, json!(null))]);
+        let mut processor = processor();
+        processor.client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_millis(250))
+            .build()
+            .unwrap();
+        let error = processor
+            .process_at_endpoint(
+                "合成入力",
+                &WindowContext::default(),
+                &Dictionary::default(),
+                "",
+                &endpoint,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.chain().any(|cause| cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(|error| error.is_timeout())));
         assert_eq!(server.join().unwrap().len(), 2);
     }
 
