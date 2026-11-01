@@ -189,7 +189,7 @@ engine = "claude"  # "claude" | "ollama"
 
 [ai.claude]
 api_key_env = "ANTHROPIC_API_KEY"
-model = "claude-sonnet-4-6"
+model = "claude-sonnet-5-5"
 
 [ai.ollama]
 host = "http://localhost:11434"

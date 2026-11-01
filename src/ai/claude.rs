@@ -67,6 +67,71 @@ impl ClaudeProcessor {
             max_response_bytes,
         })
     }
+
+    async fn send_message(
+        &self,
+        endpoint: &str,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let response = self
+            .client
+            .post(endpoint)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .json(body)
+            .send()
+            .await
+            .context("sending request to Claude API")?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Claude API error ({}): {}", status, body);
+        }
+        read_response_json(response, self.max_response_bytes).await
+    }
+
+    // The production entry point always supplies ANTHROPIC_API_URL. Keeping the
+    // transport boundary here lets regression tests exercise the entire exchange.
+    async fn process_at_endpoint(
+        &self,
+        raw_text: &str,
+        context: &WindowContext,
+        dictionary: &Dictionary,
+        memory_context: &str,
+        endpoint: &str,
+    ) -> Result<ProcessResult> {
+        let body = build_request_body(
+            &self.model,
+            &build_system_prompt(context, dictionary, memory_context),
+            &format!("Clean up this speech-to-text output:\n\n{}", raw_text),
+            Some(&learning_tools()),
+        );
+        let response = self.send_message(endpoint, &body).await?;
+        let mut result = parse_content_blocks(&response)?;
+        if result.text.is_empty() {
+            let followup = build_learning_followup(&body, &response)?;
+            let response = self.send_message(endpoint, &followup).await?;
+            // One follow-up only; tool_choice=none requests the final text and
+            // bounds both latency and cost. Do not expose pending learnings on failure.
+            if response["content"]
+                .as_array()
+                .is_some_and(|blocks| blocks.iter().any(|b| b["type"] == "tool_use"))
+            {
+                anyhow::bail!("Claude requested another tool after learning follow-up");
+            }
+            result.text = parse_process_result(&response)?.text;
+        }
+        Ok(result)
+    }
+}
+
+fn apply_model_settings(body: &mut serde_json::Value) {
+    if body["model"] == "claude-sonnet-5-5" {
+        // Voice formatting is latency-sensitive. Sonnet 5.5 otherwise enables
+        // up-front adaptive thinking by default, unlike Sonnet 4.6.
+        body["thinking"] = json!({"type": "between_tools"});
+        body["output_config"] = json!({"effort": "low"});
+    }
 }
 
 /// Build the JSON request body for the Claude Messages API.
@@ -90,6 +155,7 @@ pub fn build_request_body(
     if let Some(tools) = tools {
         body["tools"] = tools.clone();
     }
+    apply_model_settings(&mut body);
     body
 }
 
@@ -130,8 +196,84 @@ pub fn learning_tools() -> serde_json::Value {
     ])
 }
 
-/// Parse a Claude response into a ProcessResult, extracting text and tool_use learnings.
-pub fn parse_process_result(resp: &serde_json::Value) -> Result<ProcessResult> {
+fn parse_learning(block: &serde_json::Value) -> Option<Learning> {
+    let input = &block["input"];
+    match block["name"].as_str()? {
+        "learn_term" => {
+            let from = input["from"].as_str()?;
+            let to = input["to"].as_str()?;
+            if from.trim().is_empty() || to.trim().is_empty() {
+                return None;
+            }
+            Some(Learning::Term {
+                from: from.into(),
+                to: to.into(),
+            })
+        }
+        "learn_context" => {
+            let category = input["category"].as_str()?;
+            let content = input["content"].as_str()?;
+            if !matches!(
+                category,
+                "user_profile" | "domain" | "project" | "workflow" | "other"
+            ) || content.trim().is_empty()
+            {
+                return None;
+            }
+            Some(Learning::Context {
+                category: category.into(),
+                content: content.into(),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn build_learning_followup(
+    original: &serde_json::Value,
+    response: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let content = response["content"]
+        .as_array()
+        .context("missing content array")?;
+    let mut results = Vec::new();
+    let mut ids = std::collections::HashSet::new();
+    for block in content.iter().filter(|b| b["type"] == "tool_use") {
+        let id = block["id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .context("missing learning tool_use id")?;
+        if !ids.insert(id) {
+            anyhow::bail!("duplicate learning tool_use id");
+        }
+        let accepted = parse_learning(block).is_some();
+        results.push(json!({
+            "type": "tool_result",
+            "tool_use_id": id,
+            "is_error": !accepted,
+            "content": if accepted {
+                "Learning accepted for saving after the final text is returned. Now output only the corrected speech-to-text text."
+            } else {
+                "Unsupported or invalid learning request. Output the corrected speech-to-text text without more tool calls."
+            }
+        }));
+    }
+    if results.is_empty() {
+        anyhow::bail!("No text content in Claude response");
+    }
+    let mut followup = original.clone();
+    let messages = followup["messages"]
+        .as_array_mut()
+        .context("missing messages array")?;
+    // Preserve the full content verbatim, including signed thinking blocks.
+    messages.push(json!({"role": "assistant", "content": content}));
+    messages.push(json!({"role": "user", "content": results}));
+    followup["tool_choice"] = json!({"type": "none"});
+    Ok(followup)
+}
+
+/// Parse content without requiring text yet: a tool-only turn must be resumed.
+fn parse_content_blocks(resp: &serde_json::Value) -> Result<ProcessResult> {
     let content = resp["content"]
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("missing content array"))?;
@@ -150,40 +292,12 @@ pub fn parse_process_result(resp: &serde_json::Value) -> Result<ProcessResult> {
                 }
             }
             Some("tool_use") => {
-                let name = block["name"].as_str().unwrap_or("");
-                let input = &block["input"];
-                match name {
-                    "learn_term" => {
-                        if let (Some(from), Some(to)) =
-                            (input["from"].as_str(), input["to"].as_str())
-                        {
-                            learnings.push(Learning::Term {
-                                from: from.to_string(),
-                                to: to.to_string(),
-                            });
-                        }
-                    }
-                    "learn_context" => {
-                        if let (Some(cat), Some(cont)) =
-                            (input["category"].as_str(), input["content"].as_str())
-                        {
-                            learnings.push(Learning::Context {
-                                category: cat.to_string(),
-                                content: cont.to_string(),
-                            });
-                        }
-                    }
-                    _ => {
-                        tracing::warn!("Unknown tool_use: {}", name);
-                    }
+                if let Some(learning) = parse_learning(block) {
+                    learnings.push(learning);
                 }
             }
             _ => {}
         }
-    }
-
-    if text.is_empty() {
-        anyhow::bail!("No text content in Claude response");
     }
 
     Ok(ProcessResult {
@@ -192,14 +306,29 @@ pub fn parse_process_result(resp: &serde_json::Value) -> Result<ProcessResult> {
     })
 }
 
+/// Parse a completed response; callers must never type an empty result.
+pub fn parse_process_result(resp: &serde_json::Value) -> Result<ProcessResult> {
+    let result = parse_content_blocks(resp)?;
+    if result.text.is_empty() {
+        anyhow::bail!("No text content in Claude response");
+    }
+    Ok(result)
+}
+
 /// Extract text from a Claude Messages API response.
 pub fn parse_response_text(resp: &serde_json::Value) -> Result<String> {
-    resp["content"]
+    let text = resp["content"]
         .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|block| block["text"].as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| anyhow::anyhow!("unexpected Claude response format: {}", resp))
+        .context("missing content array")?
+        .iter()
+        .filter(|block| block["type"] == "text")
+        .filter_map(|block| block["text"].as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if text.trim().is_empty() {
+        anyhow::bail!("No text content in Claude response");
+    }
+    Ok(text)
 }
 
 /// Parse the consolidation response containing JSON terms and Markdown context.
@@ -280,7 +409,7 @@ pub fn test_connectivity(api_key: &str, model: &str) -> Result<String> {
         .build()
         .context("building HTTP client")?;
 
-    let body = json!({
+    let mut body = json!({
         "model": model,
         "max_tokens": 64,
         "messages": [
@@ -290,6 +419,7 @@ pub fn test_connectivity(api_key: &str, model: &str) -> Result<String> {
             }
         ]
     });
+    apply_model_settings(&mut body);
 
     let response = client
         .post(ANTHROPIC_API_URL)
@@ -319,34 +449,15 @@ impl TextProcessor for ClaudeProcessor {
         dictionary: &Dictionary,
         memory_context: &str,
     ) -> Result<ProcessResult> {
-        let system_prompt = build_system_prompt(context, dictionary, memory_context);
-        let tools = learning_tools();
-        let body = build_request_body(
-            &self.model,
-            &system_prompt,
-            &format!("Clean up this speech-to-text output:\n\n{}", raw_text),
-            Some(&tools),
-        );
-
-        let response = self
-            .client
-            .post(ANTHROPIC_API_URL)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .context("sending request to Claude API")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Claude API error ({}): {}", status, body);
-        }
-
-        let resp = read_response_json(response, self.max_response_bytes).await?;
-        let result = parse_process_result(&resp)?;
+        let result = self
+            .process_at_endpoint(
+                raw_text,
+                context,
+                dictionary,
+                memory_context,
+                ANTHROPIC_API_URL,
+            )
+            .await?;
 
         tracing::info!(
             "Claude processed: {} (learnings: {})",
@@ -392,6 +503,249 @@ impl TextProcessor for ClaudeProcessor {
 
         let result = parse_consolidation_response(&text)?;
         Ok(Some(result))
+    }
+}
+
+#[cfg(test)]
+mod exchange_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+
+    fn mock_api(
+        responses: Vec<(u16, serde_json::Value)>,
+    ) -> (String, std::thread::JoinHandle<Vec<serde_json::Value>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/v1/messages", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let handle = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for (status, response) in responses {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                && Instant::now() < deadline =>
+                        {
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(e) => panic!("expected API request: {e}"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                let (header_end, length) = loop {
+                    let mut buffer = [0; 4096];
+                    let count = stream.read(&mut buffer).unwrap();
+                    assert!(count > 0);
+                    bytes.extend_from_slice(&buffer[..count]);
+                    if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&bytes[..end]);
+                        let length = headers
+                            .lines()
+                            .find_map(|line| {
+                                let (key, value) = line.split_once(':')?;
+                                key.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().unwrap())
+                            })
+                            .unwrap();
+                        break (end + 4, length);
+                    }
+                };
+                while bytes.len() < header_end + length {
+                    let mut buffer = [0; 4096];
+                    let count = stream.read(&mut buffer).unwrap();
+                    assert!(count > 0);
+                    bytes.extend_from_slice(&buffer[..count]);
+                }
+                requests
+                    .push(serde_json::from_slice(&bytes[header_end..header_end + length]).unwrap());
+                let body = response.to_string();
+                write!(stream, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+            requests
+        });
+        (endpoint, handle)
+    }
+
+    fn processor() -> ClaudeProcessor {
+        ClaudeProcessor {
+            api_key: "synthetic-test-key".into(),
+            model: "claude-sonnet-5-5".into(),
+            client: reqwest::Client::builder().no_proxy().build().unwrap(),
+            max_response_bytes: 1024 * 1024,
+        }
+    }
+
+    fn tool_turn() -> serde_json::Value {
+        json!({"stop_reason":"tool_use", "content":[
+            {"type":"thinking", "thinking":"", "signature":"synthetic-signature"},
+            {"type":"tool_use", "id":"term-1", "name":"learn_term", "input":{"from":"ラスト", "to":"Rust"}},
+            {"type":"tool_use", "id":"context-1", "name":"learn_context", "input":{"category":"project", "content":"Synthetic Rust project"}}
+        ]})
+    }
+
+    #[tokio::test]
+    async fn tool_only_response_resumes_and_retains_each_learning_once() {
+        let initial = tool_turn();
+        let (endpoint, server) = mock_api(vec![
+            (200, initial.clone()),
+            (
+                200,
+                json!({"content":[
+                    {"type":"thinking", "thinking":"", "signature":"final-signature"},
+                    {"type":"text", "text":"Rustで実装します。"}
+                ]}),
+            ),
+        ]);
+        let result = processor()
+            .process_at_endpoint(
+                "ラストで実装します",
+                &WindowContext::default(),
+                &Dictionary::default(),
+                "",
+                &endpoint,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.text, "Rustで実装します。");
+        assert_eq!(result.learnings.len(), 2);
+        assert!(
+            matches!(&result.learnings[0], Learning::Term { from, to } if from == "ラスト" && to == "Rust")
+        );
+        assert!(
+            matches!(&result.learnings[1], Learning::Context { category, .. } if category == "project")
+        );
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[1]["messages"][0], requests[0]["messages"][0]);
+        assert_eq!(requests[1]["messages"][1]["content"], initial["content"]);
+        let results = requests[1]["messages"][2]["content"].as_array().unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["tool_use_id"], "term-1");
+        assert_eq!(results[1]["tool_use_id"], "context-1");
+        assert_eq!(requests[1]["tool_choice"]["type"], "none");
+        assert_eq!(requests[1]["thinking"], requests[0]["thinking"]);
+        assert_eq!(requests[1]["output_config"], requests[0]["output_config"]);
+    }
+
+    #[tokio::test]
+    async fn complete_text_and_learning_still_need_only_one_request() {
+        let mut response = tool_turn();
+        response["content"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"type":"text","text":"Rustで実装します。"}));
+        let (endpoint, server) = mock_api(vec![(200, response)]);
+        let result = processor()
+            .process_at_endpoint(
+                "ラストで実装します",
+                &WindowContext::default(),
+                &Dictionary::default(),
+                "",
+                &endpoint,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.text, "Rustで実装します。");
+        assert_eq!(result.learnings.len(), 2);
+        assert_eq!(server.join().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_followup_does_not_return_pending_learnings() {
+        let (endpoint, server) = mock_api(vec![
+            (200, tool_turn()),
+            (500, json!({"error":{"type":"api_error"}})),
+        ]);
+        let result = processor()
+            .process_at_endpoint(
+                "合成入力",
+                &WindowContext::default(),
+                &Dictionary::default(),
+                "",
+                &endpoint,
+            )
+            .await;
+        assert!(result.is_err());
+        assert_eq!(server.join().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn another_tool_turn_is_rejected_without_a_third_request() {
+        let (endpoint, server) = mock_api(vec![(200, tool_turn()), (200, tool_turn())]);
+        let result = processor()
+            .process_at_endpoint(
+                "合成入力",
+                &WindowContext::default(),
+                &Dictionary::default(),
+                "",
+                &endpoint,
+            )
+            .await;
+        assert!(result.unwrap_err().to_string().contains("another tool"));
+        assert_eq!(server.join().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn empty_response_without_tools_is_not_retried() {
+        let (endpoint, server) = mock_api(vec![(
+            200,
+            json!({"content":[{"type":"text","text":"  "}]}),
+        )]);
+        let result = processor()
+            .process_at_endpoint(
+                "合成入力",
+                &WindowContext::default(),
+                &Dictionary::default(),
+                "",
+                &endpoint,
+            )
+            .await;
+        assert!(result.is_err());
+        assert_eq!(server.join().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn text_extraction_skips_thinking_and_keeps_all_text_blocks() {
+        let response = json!({"content":[
+            {"type":"thinking","thinking":"","signature":"synthetic"},
+            {"type":"text","text":"第一文。"},
+            {"type":"text","text":"第二文。"}
+        ]});
+        assert_eq!(parse_response_text(&response).unwrap(), "第一文。 第二文。");
+    }
+
+    #[test]
+    fn sonnet_55_uses_latency_settings_without_changing_older_models() {
+        let modern = build_request_body("claude-sonnet-5-5", "system", "input", None);
+        assert_eq!(modern["thinking"], json!({"type":"between_tools"}));
+        assert_eq!(modern["output_config"], json!({"effort":"low"}));
+        let older = build_request_body("claude-sonnet-4-6", "system", "input", None);
+        assert!(older.get("thinking").is_none());
+        assert!(older.get("output_config").is_none());
+    }
+
+    #[test]
+    fn invalid_learning_is_reported_without_accepting_it() {
+        let original = build_request_body(
+            "claude-sonnet-5-5",
+            "system",
+            "input",
+            Some(&learning_tools()),
+        );
+        let response = json!({"content":[{"type":"tool_use","id":"bad","name":"learn_term","input":{"from":""}}]});
+        assert!(parse_content_blocks(&response)
+            .unwrap()
+            .learnings
+            .is_empty());
+        let next = build_learning_followup(&original, &response).unwrap();
+        assert_eq!(next["messages"][2]["content"][0]["is_error"], true);
     }
 }
 
@@ -462,8 +816,10 @@ mod tests {
         "#,
         )
         .unwrap();
-        // Should return the first block
-        assert_eq!(parse_response_text(&resp).unwrap(), "First block");
+        assert_eq!(
+            parse_response_text(&resp).unwrap(),
+            "First block Second block"
+        );
     }
 
     #[test]
