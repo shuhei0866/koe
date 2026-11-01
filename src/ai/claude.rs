@@ -487,6 +487,9 @@ impl TextProcessor for ClaudeProcessor {
         let response = self
             .client
             .post(ANTHROPIC_API_URL)
+            // Consolidation can summarize a large memory; keep a bounded but
+            // longer deadline than interactive dictation requests.
+            .timeout(std::time::Duration::from_secs(120))
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("content-type", "application/json")
