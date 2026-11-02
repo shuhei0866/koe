@@ -1,0 +1,14 @@
+# cargo audit の設定（CI の rustsec/audit-check もこのファイルを読む）
+
+[advisories]
+# zbus 5 系の内部クレートが、zbus 6 に統合されて unmaintained になった（2026-10-16）。
+# 移行先は zbus 6 だが、koe が使う ashpd と ksni がまだ zbus 5 を必要とするので、
+# koe 側だけでは外せない。両方が zbus 6 対応版をリリースしたら移行して、ここを消す。
+#   - ashpd: https://github.com/bilelmoussaoui/ashpd/pull/491（マージ済み、リリース待ち）
+#   - ksni:  https://github.com/iovxw/ksni/pull/48（レビュー待ち）
+# 脆弱性ではなく保守終了の通知なので、移行までは許容する。
+ignore = [
+    "RUSTSEC-2026-0370", # zvariant
+    "RUSTSEC-2026-0371", # zbus_names
+    "RUSTSEC-2026-0372", # zvariant_derive
+]
