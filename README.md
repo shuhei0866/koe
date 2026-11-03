@@ -56,7 +56,7 @@ Mac や Windows には、話した内容を AI が読みやすい文章に整え
 
 [Releases](https://github.com/shuhei0866/koe/releases) から最新の `koe-vX.Y.Z-linux-x86_64.tar.gz` をダウンロードして展開し、`koe` を `$PATH` の通った場所（例: `~/.local/bin/`）に置きます。
 
-Wayland では、デスクトップポータルが Koe を識別するために desktop ファイルが必要です。起動する前に入れてください。
+Wayland では、デスクトップポータルが Koe を識別するために desktop ファイルが必要です。起動する前に、アーカイブを展開したディレクトリで次を実行してください。
 
 ```bash
 desktop-file-install --dir="$HOME/.local/share/applications" \
@@ -253,8 +253,10 @@ AI の整形に Claude を使っていると、Koe は覚えておく価値の�
 
 ```bash
 systemctl --user restart xdg-desktop-portal-gnome xdg-desktop-portal
-systemctl --user restart koe
+systemctl --user restart koe   # systemd のユーザーユニットで動かしている場合
 ```
+
+ユーザーユニットを使っていない場合は、Koe を終了してから `koe` で起動し直してください。
 
 `xdg-desktop-portal` だけを再起動しないでください。GNOME 側が古いほうにショートカットの押下を送り続けるため、登録は成功するのにキーの押下が Koe に届かなくなります。
 

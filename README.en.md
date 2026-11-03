@@ -139,7 +139,7 @@ stateDiagram-v2
 ### Pre-built Binary
 
 Download the latest pre-built binary from the [Releases page](https://github.com/shuhei0866/koe/releases).
-Extract and place the `koe` binary in your `$PATH` (e.g. `~/.local/bin/`). On Wayland, also install the included desktop identity before starting Koe:
+Extract and place the `koe` binary in your `$PATH` (e.g. `~/.local/bin/`). On Wayland, also install the included desktop identity before starting Koe. Run this in the directory where you extracted the archive:
 
 ```bash
 desktop-file-install --dir="$HOME/.local/share/applications" \
@@ -203,8 +203,10 @@ Restart both portal services together, then Koe, and approve the dialogs:
 
 ```bash
 systemctl --user restart xdg-desktop-portal-gnome xdg-desktop-portal
-systemctl --user restart koe
+systemctl --user restart koe   # if you run Koe as a systemd user unit
 ```
+
+If you don't use a user unit, quit Koe and start it again with `koe`.
 
 Never restart `xdg-desktop-portal` alone: the GNOME back end keeps sending shortcut presses to the old front end, so registration still succeeds but key presses never reach Koe.
 
