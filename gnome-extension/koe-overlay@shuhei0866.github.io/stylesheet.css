@@ -9,3 +9,11 @@
   font-size: 10pt;
   text-align: center;
 }
+
+.koe-overlay-transcript {
+  color: #e8e8e8;
+  font-size: 11pt;
+  max-width: 560px;
+  padding: 2px 0 4px 0;
+  text-align: center;
+}

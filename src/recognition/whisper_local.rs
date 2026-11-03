@@ -10,7 +10,7 @@ use super::SpeechRecognizer;
 pub struct WhisperLocalRecognizer {
     ctx: WhisperContext,
     language: String,
-    prompt_hint: String,
+    prompt_hint: std::sync::Mutex<String>,
 }
 
 impl WhisperLocalRecognizer {
@@ -35,15 +35,21 @@ impl WhisperLocalRecognizer {
         Ok(Self {
             ctx,
             language: config.language.clone(),
-            prompt_hint: String::new(),
+            prompt_hint: std::sync::Mutex::new(String::new()),
         })
     }
 }
 
 #[async_trait]
 impl SpeechRecognizer for WhisperLocalRecognizer {
-    fn set_prompt_hint(&mut self, hint: &str) {
-        self.prompt_hint = hint.to_string();
+    fn set_prompt_hint(&self, hint: &str) {
+        if let Ok(mut h) = self.prompt_hint.lock() {
+            *h = hint.to_string();
+        }
+    }
+
+    fn supports_live(&self) -> bool {
+        true
     }
 
     async fn transcribe(&self, audio: &AudioData) -> Result<String> {
@@ -54,7 +60,11 @@ impl SpeechRecognizer for WhisperLocalRecognizer {
         }
 
         let language = self.language.clone();
-        let prompt_hint = self.prompt_hint.clone();
+        let prompt_hint = self
+            .prompt_hint
+            .lock()
+            .map(|h| h.clone())
+            .unwrap_or_default();
 
         // whisper-rs is blocking, so run in a blocking thread
         let ctx_ptr = &self.ctx as *const WhisperContext as usize;
@@ -96,7 +106,7 @@ impl SpeechRecognizer for WhisperLocalRecognizer {
         .await
         .context("whisper task panicked")??;
 
-        tracing::info!("Whisper transcription: {}", result);
+        tracing::debug!("Whisper transcription: {}", result);
         Ok(result)
     }
 }

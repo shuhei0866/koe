@@ -26,6 +26,11 @@ impl KoeDaemon {
     /// Emitted with the current audio RMS level during recording (~30fps).
     #[zbus(signal)]
     async fn audio_level(emitter: &SignalEmitter<'_>, level: f64) -> zbus::Result<()>;
+
+    /// Text recognized so far while recording. Display only; it may change
+    /// until the recording stops, and the final text is what gets typed.
+    #[zbus(signal)]
+    async fn live_transcript(emitter: &SignalEmitter<'_>, text: &str) -> zbus::Result<()>;
 }
 
 /// Emitter handle for sending D-Bus signals from the daemon.
@@ -72,6 +77,18 @@ impl DbusEmitter {
         {
             let ctxt = iface_ref.signal_emitter();
             let _ = KoeDaemon::audio_level(ctxt, level).await;
+        }
+    }
+
+    /// Emit a `LiveTranscript` signal with the text recognized so far.
+    pub async fn emit_live_transcript(&self, text: &str) {
+        let object_server = self.connection.object_server();
+        if let Ok(iface_ref) = object_server
+            .interface::<_, KoeDaemon>("/com/github/koe/Daemon")
+            .await
+        {
+            let ctxt = iface_ref.signal_emitter();
+            let _ = KoeDaemon::live_transcript(ctxt, text).await;
         }
     }
 }

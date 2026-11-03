@@ -8,6 +8,7 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Pango from 'gi://Pango';
 import St from 'gi://St';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -28,6 +29,8 @@ const FRAME_MS = 33;
 const FADEOUT_DELAY_MS = 2000;
 const FADEOUT_DURATION_MS = 600;
 const TOP_MARGIN = 12;
+// Live transcript: show only the end of long text so the overlay stays small.
+const TRANSCRIPT_MAX_CHARS = 90;
 
 const LABELS = {
     Recording: 'Recording...',
@@ -78,6 +81,15 @@ class KoeOverlay {
         this._area.connect('repaint', area => this._repaint(area));
         this.actor.add_child(this._area);
 
+        this._transcript = new St.Label({
+            style_class: 'koe-overlay-transcript',
+            x_align: Clutter.ActorAlign.CENTER,
+            visible: false,
+        });
+        this._transcript.clutter_text.line_wrap = true;
+        this._transcript.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        this.actor.add_child(this._transcript);
+
         Main.uiGroup.add_child(this.actor);
     }
 
@@ -87,6 +99,9 @@ class KoeOverlay {
         if (text === undefined)
             return;
         this._label.text = text;
+        // A new recording starts with an empty transcript.
+        if (state === 'Recording')
+            this.setTranscript('');
 
         if (state === 'Idle') {
             this._level = 0;
@@ -94,6 +109,17 @@ class KoeOverlay {
         } else {
             this._show();
         }
+    }
+
+    setTranscript(text) {
+        const chars = [...text];
+        const shown = chars.length > TRANSCRIPT_MAX_CHARS
+            ? `…${chars.slice(-TRANSCRIPT_MAX_CHARS).join('')}`
+            : text;
+        this._transcript.text = shown;
+        this._transcript.visible = shown.length > 0;
+        if (this.actor.visible)
+            this._reposition();
     }
 
     setLevel(level) {
@@ -210,6 +236,9 @@ export default class KoeOverlayExtension extends Extension {
                 } else if (signal === 'AudioLevel') {
                     const [level] = params.deepUnpack();
                     this._overlay.setLevel(level);
+                } else if (signal === 'LiveTranscript') {
+                    const [text] = params.deepUnpack();
+                    this._overlay.setTranscript(text);
                 }
             });
 

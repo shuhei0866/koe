@@ -21,6 +21,32 @@ pub struct Config {
     pub limits: LimitsConfig,
     #[serde(default)]
     pub vad: VadConfig,
+    #[serde(default)]
+    pub live: LiveConfig,
+}
+
+/// Live transcript: transcribe repeatedly while recording and show the text
+/// in the overlay. Only used with local recognition (cloud APIs bill per call).
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct LiveConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Pause between live transcriptions, in milliseconds.
+    #[serde(default = "default_live_interval_ms")]
+    pub interval_ms: u64,
+}
+
+impl Default for LiveConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            interval_ms: default_live_interval_ms(),
+        }
+    }
+}
+
+fn default_live_interval_ms() -> u64 {
+    700
 }
 
 /// Voice activity detection before recognition (Silero VAD).
@@ -566,6 +592,7 @@ mod tests {
             history: HistoryConfig::default(),
             limits: LimitsConfig::default(),
             vad: VadConfig::default(),
+            live: LiveConfig::default(),
         };
 
         // Save to temp file

@@ -148,6 +148,24 @@ pub fn display_level(rms: f32) -> f32 {
     ((db - LEVEL_FLOOR_DB) / (LEVEL_CEIL_DB - LEVEL_FLOOR_DB)).clamp(0.0, 1.0)
 }
 
+/// Read-only handle to the samples recorded so far, for live transcription.
+#[derive(Clone)]
+pub struct LiveAudio {
+    buffer: Arc<Mutex<Vec<f32>>>,
+    sample_rate: u32,
+}
+
+impl LiveAudio {
+    /// Copy of everything recorded since the recording started.
+    pub fn snapshot(&self) -> AudioData {
+        let samples = self.buffer.lock().map(|b| b.clone()).unwrap_or_default();
+        AudioData {
+            samples,
+            sample_rate: self.sample_rate,
+        }
+    }
+}
+
 /// Audio recorder using cpal.
 pub struct AudioRecorder {
     buffer: Arc<Mutex<Vec<f32>>>,
@@ -289,6 +307,15 @@ impl AudioRecorder {
             samples,
             sample_rate: self.sample_rate,
         })
+    }
+
+    /// Handle for reading the current recording while it is in progress.
+    /// Call after [`Self::start`], which sets the sample rate.
+    pub fn live_audio(&self) -> LiveAudio {
+        LiveAudio {
+            buffer: self.buffer.clone(),
+            sample_rate: self.sample_rate,
+        }
     }
 
     #[allow(dead_code)]

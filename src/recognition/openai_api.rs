@@ -15,7 +15,7 @@ pub struct OpenAiRecognizer {
     language: String,
     model: String,
     client: reqwest::Client,
-    prompt_hint: String,
+    prompt_hint: std::sync::Mutex<String>,
     max_response_bytes: usize,
 }
 
@@ -28,7 +28,7 @@ impl OpenAiRecognizer {
             language: config.language.clone(),
             model: config.model.clone(),
             client: reqwest::Client::new(),
-            prompt_hint: String::new(),
+            prompt_hint: std::sync::Mutex::new(String::new()),
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
         })
     }
@@ -36,8 +36,10 @@ impl OpenAiRecognizer {
 
 #[async_trait]
 impl SpeechRecognizer for OpenAiRecognizer {
-    fn set_prompt_hint(&mut self, hint: &str) {
-        self.prompt_hint = hint.to_string();
+    fn set_prompt_hint(&self, hint: &str) {
+        if let Ok(mut h) = self.prompt_hint.lock() {
+            *h = hint.to_string();
+        }
     }
 
     async fn transcribe(&self, audio: &AudioData) -> Result<String> {
@@ -58,8 +60,13 @@ impl SpeechRecognizer for OpenAiRecognizer {
         }
 
         // Add prompt hint if available
-        if !self.prompt_hint.is_empty() {
-            form = form.text("prompt", self.prompt_hint.clone());
+        let prompt_hint = self
+            .prompt_hint
+            .lock()
+            .map(|h| h.clone())
+            .unwrap_or_default();
+        if !prompt_hint.is_empty() {
+            form = form.text("prompt", prompt_hint);
         }
 
         let response = self

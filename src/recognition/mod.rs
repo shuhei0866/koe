@@ -3,6 +3,7 @@ pub mod whisper_local;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use std::sync::Arc;
 
 use crate::audio::AudioData;
 use crate::config::{RecognitionConfig, RecognitionEngine};
@@ -16,18 +17,24 @@ pub trait SpeechRecognizer: Send + Sync {
 
     /// Set a prompt hint to improve recognition of specific terms.
     /// The hint is a comma-separated list of terms the model should recognize.
-    fn set_prompt_hint(&mut self, hint: &str);
+    fn set_prompt_hint(&self, hint: &str);
+
+    /// Whether repeated transcription while recording (live transcript) is
+    /// cheap enough. False for paid cloud APIs.
+    fn supports_live(&self) -> bool {
+        false
+    }
 }
 
 /// Create a recognizer based on config.
-pub fn create_recognizer(config: &RecognitionConfig) -> Result<Box<dyn SpeechRecognizer>> {
+pub fn create_recognizer(config: &RecognitionConfig) -> Result<Arc<dyn SpeechRecognizer>> {
     match config.engine {
         RecognitionEngine::WhisperLocal => {
             let whisper_config = config
                 .whisper_local
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("whisper_local config missing"))?;
-            Ok(Box::new(whisper_local::WhisperLocalRecognizer::new(
+            Ok(Arc::new(whisper_local::WhisperLocalRecognizer::new(
                 whisper_config,
             )?))
         }
@@ -36,7 +43,7 @@ pub fn create_recognizer(config: &RecognitionConfig) -> Result<Box<dyn SpeechRec
                 .openai_api
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("openai_api config missing"))?;
-            Ok(Box::new(openai_api::OpenAiRecognizer::new(api_config)?))
+            Ok(Arc::new(openai_api::OpenAiRecognizer::new(api_config)?))
         }
     }
 }

@@ -107,6 +107,7 @@ impl Widgets {
             history: Default::default(),
             limits: Default::default(),
             vad: Default::default(),
+            live: Default::default(),
         }
     }
 }
@@ -189,6 +190,7 @@ fn save_from_widgets(widgets: &Widgets, window: Option<&libadwaita::PreferencesW
             new.model = old.model;
         }
         config.vad = existing.vad;
+        config.live = existing.live;
     }
     match config.save(&path) {
         Ok(()) => {
@@ -249,6 +251,7 @@ fn default_config() -> Config {
         history: Default::default(),
         limits: Default::default(),
         vad: Default::default(),
+        live: Default::default(),
     }
 }
 

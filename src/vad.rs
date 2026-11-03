@@ -83,7 +83,7 @@ impl VoiceActivityDetector {
                 .collect()
         };
         let segments = drop_leading(&segments, ignore_leading_ms, speech_pad_ms);
-        tracing::info!(
+        tracing::debug!(
             "VAD segments (s): {}",
             segments
                 .iter()
