@@ -107,7 +107,8 @@ export OPENAI_API_KEY="..."      # 音声認識に OpenAI API を使う場合
 ## 初回起動（GNOME Wayland）
 
 ```bash
-koe
+koe                    # ビルド済みバイナリを $PATH に置いた場合
+./target/release/koe   # ソースからビルドした場合（リポジトリ直下で実行すると同梱の config.toml を使う）
 ```
 
 Koe は GNOME 標準のデスクトップポータル（GlobalShortcuts / RemoteDesktop / Clipboard）を使います。
