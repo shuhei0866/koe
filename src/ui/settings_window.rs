@@ -178,7 +178,7 @@ fn save_from_widgets(widgets: &Widgets, window: Option<&libadwaita::PreferencesW
     let mut config = widgets.read_config();
     let path = Config::config_path();
     // Preserve fields not exposed in the UI (e.g. context_enabled, limits)
-    if let Ok(existing) = Config::load() {
+    if let Ok(existing) = Config::load_from(&path) {
         config.ai.context_enabled = existing.ai.context_enabled;
         config.limits = existing.limits;
         // The model is not exposed in the UI; keep the configured one.
