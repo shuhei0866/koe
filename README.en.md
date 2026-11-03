@@ -248,6 +248,15 @@ wget -O ~/.local/share/koe/models/ggml-silero-v5.1.2.bin \
 
 ### API Keys
 
+The recommended way is the GNOME keyring, which works both from a terminal and from the systemd user unit. Each command prompts for the key:
+
+```bash
+secret-tool store --label "koe anthropic-api-key" service koe key anthropic-api-key
+secret-tool store --label "koe openai-api-key" service koe key openai-api-key
+```
+
+Environment variables also work, but variables exported in a shell do not reach Koe started by the user unit. For the user unit, write them to `~/.config/koe/env` as `ANTHROPIC_API_KEY=...` lines (`chmod 600` recommended).
+
 ```bash
 # If using Claude for AI post-processing
 export ANTHROPIC_API_KEY="your-key-here"

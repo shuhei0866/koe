@@ -8,6 +8,9 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
+# The user manager does not see variables exported in a shell. Put API keys
+# in the GNOME keyring (see README) or in this optional file (KEY=value lines).
+EnvironmentFile=-%h/.config/koe/env
 ExecStart=/usr/bin/koe
 Restart=on-failure
 RestartSec=3

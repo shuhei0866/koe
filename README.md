@@ -109,9 +109,18 @@ wget -O ~/.local/share/koe/models/ggml-silero-v5.1.2.bin \
 
 使うサービスの分だけ設定します。完全ローカル構成（whisper.cpp + Ollama）なら不要です。
 
+おすすめは GNOME キーリングに入れる方法です。ターミナルから起動しても、systemd のユーザーユニットから自動起動しても読めます。コマンドを実行するとキーの入力を求められます。
+
 ```bash
-export ANTHROPIC_API_KEY="..."   # AI の整形に Claude を使う場合
-export OPENAI_API_KEY="..."      # 音声認識に OpenAI API を使う場合
+secret-tool store --label "koe anthropic-api-key" service koe key anthropic-api-key   # AI の整形に Claude を使う場合
+secret-tool store --label "koe openai-api-key" service koe key openai-api-key         # 音声認識に OpenAI API を使う場合
+```
+
+環境変数でも渡せます。ただしシェルで `export` した値は、ユーザーユニットから起動した Koe には届きません。ユーザーユニットで使う場合は、`~/.config/koe/env` に `ANTHROPIC_API_KEY=...` の形で書いてください（`chmod 600` 推奨）。
+
+```bash
+export ANTHROPIC_API_KEY="..."   # ターミナルから koe を起動する場合
+export OPENAI_API_KEY="..."
 ```
 
 ## 初回起動（GNOME Wayland）

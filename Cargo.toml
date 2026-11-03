@@ -95,6 +95,11 @@ speak, and the text is transcribed by Whisper, formatted by Claude or Ollama, \
 and typed into the active window. Works on GNOME Wayland through the \
 standard desktop portals."""
 depends = "$auto"
+# Helpers Koe runs as subprocesses (not found by shared-library detection):
+# xdotool/xclip/xprop for X11 input, secret-tool for API keys in the GNOME
+# keyring, canberra-gtk-play for sound feedback. GNOME Wayland input uses
+# portals and needs none of the X11 tools, so they are recommends.
+recommends = "xdotool, xclip, x11-utils, libsecret-tools, gnome-session-canberra"
 assets = [
     ["target/release/koe", "usr/bin/", "755"],
     ["data/io.github.shuhei0866.koe.desktop", "usr/share/applications/", "644"],
