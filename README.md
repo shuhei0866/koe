@@ -43,6 +43,7 @@ macOS has polished voice input tools with AI post-processing, but Linux has had 
 - **Context Awareness**: Active window info is sent to the AI for context-appropriate formatting
 - **Dictionary Management**: Domain-specific term dictionaries improve recognition accuracy
 - **Silence Removal (VAD)**: Silero VAD drops silence before recognition, so silent recordings type nothing instead of hallucinated sentences
+- **Live Transcript**: While recording, the overlay shows what has been recognized so far (local whisper.cpp only). Only the final text is typed
 - **Hotkeys**: Push-to-talk and toggle modes with configurable key bindings
 - **Direct Input**: Types directly into the active window, with clipboard fallback
 
@@ -288,9 +289,16 @@ model_path = "~/.local/share/koe/models/ggml-silero-v5.1.2.bin"
 threshold = 0.5       # speech probability (0.0-1.0); raise it if noise is kept
 min_speech_ms = 250   # shorter sounds are treated as noise
 speech_pad_ms = 200   # kept around each speech segment
+
+# Optional. These are the defaults.
+[live]
+enabled = true     # live transcript in the overlay (local recognition only)
+interval_ms = 700  # pause between live transcriptions
 ```
 
-The start cue sound can be picked up by the microphone. While `[feedback] sound_enabled` is on, sounds that end within 0.6 s of the start of a recording are ignored. The `VAD segments` log line shows which parts of each recording were kept.
+The start cue sound can be picked up by the microphone. While `[feedback] sound_enabled` is on, sounds that end within 0.6 s of the start of a recording are ignored. The `VAD: kept` log line shows how much of each recording was kept as speech.
+
+The live transcript re-transcribes the recording so far (the last 25 s at most) after each pause, and sends it as the `LiveTranscript` D-Bus signal. It is not used with `openai_api`, which bills every request. When the recording stops, Koe waits for a live pass in progress to finish, then transcribes the whole recording once more for the text that is typed.
 
 ## Dictionary File
 

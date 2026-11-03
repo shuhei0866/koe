@@ -91,11 +91,7 @@ async fn connection() -> Result<&'static zbus::Connection> {
 /// restarted portal needs it again before any new session is created.
 async fn ensure_registered(connection: &zbus::Connection) -> Result<()> {
     static REGISTERED_OWNER: Mutex<Option<String>> = Mutex::const_new(None);
-    let owner = zbus::fdo::DBusProxy::new(connection)
-        .await?
-        .get_name_owner("org.freedesktop.portal.Desktop".try_into()?)
-        .await?
-        .to_string();
+    let owner = portal_owner(connection).await?;
     let mut registered = REGISTERED_OWNER.lock().await;
     if registered.as_deref() == Some(owner.as_str()) {
         return Ok(());
@@ -524,11 +520,24 @@ async fn shortcut_events(
     anyhow::bail!("Wayland shortcut session ended: {reason}")
 }
 
+/// Unique bus name of the running portal, starting it first if needed.
+///
+/// `GetNameOwner` alone does not activate a service. After a login, the portal
+/// can fail to start (it was activated before the graphical session was ready)
+/// and stays down until something activates it again.
+async fn portal_owner(connection: &zbus::Connection) -> Result<String> {
+    let bus = zbus::fdo::DBusProxy::new(connection).await?;
+    let name: zbus::names::BusName<'_> = "org.freedesktop.portal.Desktop".try_into()?;
+    if let zbus::names::BusName::WellKnown(ref well_known) = name {
+        if let Err(e) = bus.start_service_by_name(well_known.clone(), 0).await {
+            tracing::debug!("Could not start the portal service: {}", e);
+        }
+    }
+    Ok(bus.get_name_owner(name).await?.to_string())
+}
+
 async fn ordered_shortcut_signals(conn: &zbus::Connection) -> Result<zbus::MessageStream> {
-    let bus = zbus::fdo::DBusProxy::new(conn).await?;
-    let owner = bus
-        .get_name_owner("org.freedesktop.portal.Desktop".try_into()?)
-        .await?;
+    let owner = portal_owner(conn).await?;
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .sender(owner.as_str())?
