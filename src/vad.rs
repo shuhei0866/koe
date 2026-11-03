@@ -17,6 +17,10 @@ const SAMPLE_RATE: u32 = 16_000;
 /// segments are not glued together.
 const SEGMENT_GAP_MS: u32 = 100;
 
+/// Upper bound for durations passed to whisper.cpp, which multiplies them by
+/// the sample rate in `int` arithmetic.
+const MAX_DURATION_MS: u32 = 10_000;
+
 pub struct VoiceActivityDetector {
     ctx: Mutex<WhisperVadContext>,
     threshold: f32,
@@ -62,10 +66,11 @@ impl VoiceActivityDetector {
     pub fn extract_speech(&self, audio: &AudioData, ignore_leading_ms: u32) -> Result<AudioData> {
         let samples = audio.resample_to_16khz();
 
+        let speech_pad_ms = self.speech_pad_ms.min(MAX_DURATION_MS);
         let mut params = WhisperVadParams::new();
         params.set_threshold(self.threshold);
-        params.set_min_speech_duration(self.min_speech_ms as i32);
-        params.set_speech_pad(self.speech_pad_ms as i32);
+        params.set_min_speech_duration(self.min_speech_ms.min(MAX_DURATION_MS) as i32);
+        params.set_speech_pad(speech_pad_ms as i32);
 
         let segments: Vec<(f32, f32)> = {
             let mut ctx = self
@@ -77,7 +82,7 @@ impl VoiceActivityDetector {
                 .map(|s| (s.start, s.end))
                 .collect()
         };
-        let segments = drop_leading(&segments, ignore_leading_ms, self.speech_pad_ms);
+        let segments = drop_leading(&segments, ignore_leading_ms, speech_pad_ms);
         tracing::info!(
             "VAD segments (s): {}",
             segments
@@ -95,8 +100,12 @@ impl VoiceActivityDetector {
 }
 
 /// Drop segments (centiseconds, padded by `pad_ms` on each side) whose
-/// unpadded end falls within the first `ignore_ms`.
+/// unpadded end falls within the first `ignore_ms`. Drops nothing when
+/// `ignore_ms` is 0.
 fn drop_leading(segments: &[(f32, f32)], ignore_ms: u32, pad_ms: u32) -> Vec<(f32, f32)> {
+    if ignore_ms == 0 {
+        return segments.to_vec();
+    }
     let cutoff_cs = (ignore_ms + pad_ms) as f32 / 10.0;
     segments
         .iter()
@@ -180,7 +189,8 @@ mod tests {
 
     #[test]
     fn nothing_is_dropped_without_a_cue() {
-        assert_eq!(drop_leading(&[(0.0, 30.0)], 0, 200).len(), 1);
+        // A short recording whose padded end is clamped to its length.
+        assert_eq!(drop_leading(&[(0.0, 15.0)], 0, 200).len(), 1);
     }
 
     #[test]

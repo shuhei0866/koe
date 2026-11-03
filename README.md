@@ -60,9 +60,9 @@ flowchart TD
 
     F --> G["Resample to 16kHz mono"]
 
-    G --> V{"VAD (Silero)\nany speech?"}
-    V -->|no| V0["Stop: nothing is typed"]
-    V -->|yes| H{Speech Recognition Engine}
+    G --> VD{"VAD (Silero)\nany speech?"}
+    VD -->|no| VD0["Stop: nothing is typed"]
+    VD -->|yes| H{Speech Recognition Engine}
     H -->|whisper_local| I["whisper-rs\n(local whisper.cpp)"]
     H -->|openai_api| J["OpenAI Whisper API\n(reqwest multipart)"]
 
