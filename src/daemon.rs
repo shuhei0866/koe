@@ -6,8 +6,9 @@ use tokio::task::JoinHandle;
 use crate::ipc;
 use crate::{
     ai, audio, config, context, dbus, dictionary, history::History, hotkey, input, memory,
-    recognition, sound,
+    recognition, sound, vad,
 };
+use std::sync::Arc;
 
 #[cfg(feature = "gui")]
 mod indicator_bridge {
@@ -102,6 +103,77 @@ impl std::fmt::Display for AppState {
     }
 }
 
+/// Load the VAD model. On failure, log and continue without VAD so a missing
+/// model never stops voice input.
+fn load_vad(config: &config::VadConfig) -> Option<Arc<vad::VoiceActivityDetector>> {
+    match vad::VoiceActivityDetector::new(config) {
+        Ok(Some(detector)) => Some(Arc::new(detector)),
+        Ok(None) => {
+            tracing::info!("VAD disabled");
+            None
+        }
+        Err(e) => {
+            tracing::warn!("VAD unavailable, transcribing whole recordings: {:#}", e);
+            None
+        }
+    }
+}
+
+/// How long the start cue (`message-new-instant`, about 0.43 s) can be heard
+/// by the microphone after recording starts. Short sounds that end within this
+/// window are dropped by VAD so the cue is not transcribed.
+const START_CUE_GUARD_MS: u32 = 600;
+
+/// Drop silence from the recording. If VAD fails, keep the original audio.
+async fn keep_speech(
+    detector: &Arc<vad::VoiceActivityDetector>,
+    audio_data: audio::AudioData,
+    start_cue_played: bool,
+) -> audio::AudioData {
+    if audio_data.samples.is_empty() {
+        return audio_data;
+    }
+    let detector = Arc::clone(detector);
+    let original_secs = audio_data.samples.len() as f32 / audio_data.sample_rate as f32;
+    let ignore_leading_ms = if start_cue_played {
+        START_CUE_GUARD_MS
+    } else {
+        0
+    };
+    let result = tokio::task::spawn_blocking(move || {
+        let speech = detector.extract_speech(&audio_data, ignore_leading_ms);
+        (audio_data, speech)
+    })
+    .await;
+
+    match result {
+        Ok((_, Ok(speech))) => {
+            let speech_secs = speech.samples.len() as f32 / speech.sample_rate as f32;
+            if speech.samples.is_empty() {
+                tracing::info!("VAD: no speech in {:.1}s recording", original_secs);
+            } else {
+                tracing::info!(
+                    "VAD: kept {:.1}s of speech from {:.1}s recording",
+                    speech_secs,
+                    original_secs
+                );
+            }
+            speech
+        }
+        Ok((audio_data, Err(e))) => {
+            tracing::warn!("VAD failed, using the whole recording: {:#}", e);
+            audio_data
+        }
+        Err(e) => {
+            tracing::error!("VAD task panicked: {}", e);
+            audio::AudioData {
+                samples: Vec::new(),
+                sample_rate: 16_000,
+            }
+        }
+    }
+}
+
 /// Notify D-Bus, tray icon, and indicator window of a state change.
 async fn notify_state_change(
     state: &AppState,
@@ -172,6 +244,9 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
     let mut recognizer =
         recognition::create_recognizer(&config.recognition).context("creating recognizer")?;
     tracing::info!("Speech recognizer ready: {:?}", config.recognition.engine);
+
+    // Initialize voice activity detection (optional; falls back to no VAD)
+    let mut vad = load_vad(&config.vad);
 
     // Initialize AI processor
     let mut processor = ai::create_processor(&config.ai, config.limits.max_api_response_bytes)
@@ -331,6 +406,9 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                                 }
                             }
 
+                            // Reload VAD
+                            vad = load_vad(&new_config.vad);
+
                             // Reload AI processor
                             match ai::create_processor(
                                 &new_config.ai,
@@ -476,8 +554,15 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
 
                     match recorder.stop() {
                         Ok(audio_data) => {
+                            let audio_data = match &vad {
+                                Some(vad) => {
+                                    keep_speech(vad, audio_data, config.feedback.sound_enabled)
+                                        .await
+                                }
+                                None => audio_data,
+                            };
                             if audio_data.samples.is_empty() {
-                                tracing::warn!("No audio captured");
+                                tracing::warn!("No speech to transcribe");
                                 state = AppState::Idle;
                                 notify_state_change(
                                     &state,

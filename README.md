@@ -42,6 +42,7 @@ macOS has polished voice input tools with AI post-processing, but Linux has had 
 - **AI Post-Processing**: Switch between Claude API and Ollama (local LLM)
 - **Context Awareness**: Active window info is sent to the AI for context-appropriate formatting
 - **Dictionary Management**: Domain-specific term dictionaries improve recognition accuracy
+- **Silence Removal (VAD)**: Silero VAD drops silence before recognition, so silent recordings type nothing instead of hallucinated sentences
 - **Hotkeys**: Push-to-talk and toggle modes with configurable key bindings
 - **Direct Input**: Types directly into the active window, with clipboard fallback
 
@@ -59,7 +60,9 @@ flowchart TD
 
     F --> G["Resample to 16kHz mono"]
 
-    G --> H{Speech Recognition Engine}
+    G --> V{"VAD (Silero)\nany speech?"}
+    V -->|no| V0["Stop: nothing is typed"]
+    V -->|yes| H{Speech Recognition Engine}
     H -->|whisper_local| I["whisper-rs\n(local whisper.cpp)"]
     H -->|openai_api| J["OpenAI Whisper API\n(reqwest multipart)"]
 
@@ -219,6 +222,15 @@ wget -O ~/.local/share/koe/models/ggml-large-v3.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
 ```
 
+### Download VAD Model (recommended)
+
+Koe drops silence with Silero VAD before recognition. Without this, Whisper may type sentences that were never said (e.g. 「ご視聴ありがとうございました」) for silent recordings. If the model is missing, Koe logs a warning and transcribes whole recordings as before.
+
+```bash
+wget -O ~/.local/share/koe/models/ggml-silero-v5.1.2.bin \
+  https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin
+```
+
 ### API Keys
 
 ```bash
@@ -267,7 +279,17 @@ key = "Super_R"
 
 [dictionaries]
 paths = ["dictionaries/default.toml"]
+
+# Optional. These are the defaults.
+[vad]
+enabled = true
+model_path = "~/.local/share/koe/models/ggml-silero-v5.1.2.bin"
+threshold = 0.5       # speech probability (0.0-1.0); raise it if noise is kept
+min_speech_ms = 250   # shorter sounds are treated as noise
+speech_pad_ms = 200   # kept around each speech segment
 ```
+
+The start cue sound can be picked up by the microphone. While `[feedback] sound_enabled` is on, sounds that end within 0.6 s of the start of a recording are ignored. The `VAD segments` log line shows which parts of each recording were kept.
 
 ## Dictionary File
 

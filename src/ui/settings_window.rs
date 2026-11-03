@@ -105,6 +105,7 @@ impl Widgets {
             feedback: Default::default(),
             history: Default::default(),
             limits: Default::default(),
+            vad: Default::default(),
         }
     }
 }
@@ -179,6 +180,7 @@ fn save_from_widgets(widgets: &Widgets, window: Option<&libadwaita::PreferencesW
     if let Ok(existing) = Config::load() {
         config.ai.context_enabled = existing.ai.context_enabled;
         config.limits = existing.limits;
+        config.vad = existing.vad;
     }
     match config.save(&path) {
         Ok(()) => {
@@ -237,6 +239,7 @@ fn default_config() -> Config {
         feedback: Default::default(),
         history: Default::default(),
         limits: Default::default(),
+        vad: Default::default(),
     }
 }
 

@@ -17,6 +17,7 @@ mod recognition;
 mod sound;
 #[cfg(feature = "gui")]
 mod ui;
+mod vad;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};

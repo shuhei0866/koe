@@ -19,6 +19,53 @@ pub struct Config {
     pub history: HistoryConfig,
     #[serde(default)]
     pub limits: LimitsConfig,
+    #[serde(default)]
+    pub vad: VadConfig,
+}
+
+/// Voice activity detection before recognition (Silero VAD).
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct VadConfig {
+    /// Drop silence before recognition. When the model file is missing,
+    /// Koe logs a warning and transcribes the whole recording as before.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_vad_model_path")]
+    pub model_path: String,
+    /// Speech probability threshold (0.0-1.0). Raise it if noise is kept.
+    #[serde(default = "default_vad_threshold")]
+    pub threshold: f32,
+    /// Speech shorter than this is discarded as noise.
+    #[serde(default = "default_vad_min_speech_ms")]
+    pub min_speech_ms: u32,
+    /// Padding kept around each speech segment so word edges are not cut.
+    #[serde(default = "default_vad_speech_pad_ms")]
+    pub speech_pad_ms: u32,
+}
+
+impl Default for VadConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            model_path: default_vad_model_path(),
+            threshold: default_vad_threshold(),
+            min_speech_ms: default_vad_min_speech_ms(),
+            speech_pad_ms: default_vad_speech_pad_ms(),
+        }
+    }
+}
+
+fn default_vad_model_path() -> String {
+    "~/.local/share/koe/models/ggml-silero-v5.1.2.bin".to_string()
+}
+fn default_vad_threshold() -> f32 {
+    0.5
+}
+fn default_vad_min_speech_ms() -> u32 {
+    250
+}
+fn default_vad_speech_pad_ms() -> u32 {
+    200
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -512,6 +559,7 @@ mod tests {
             feedback: FeedbackConfig::default(),
             history: HistoryConfig::default(),
             limits: LimitsConfig::default(),
+            vad: VadConfig::default(),
         };
 
         // Save to temp file
