@@ -130,6 +130,8 @@ const LIVE_MIN_SECS: f32 = 1.0;
 /// sends the text to the overlay as `LiveTranscript` D-Bus signals.
 struct LiveTranscriptTask {
     stop: Arc<std::sync::atomic::AtomicBool>,
+    /// Wakes the task from its pause so stopping does not wait for it.
+    wake: Arc<tokio::sync::Notify>,
     handle: JoinHandle<()>,
 }
 
@@ -145,10 +147,15 @@ impl LiveTranscriptTask {
         use std::sync::atomic::Ordering;
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stop_flag = Arc::clone(&stop);
+        let wake = Arc::new(tokio::sync::Notify::new());
+        let wake_rx = Arc::clone(&wake);
         let handle = tokio::spawn(async move {
             let mut last = String::new();
             loop {
-                tokio::time::sleep(interval).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(interval) => {}
+                    _ = wake_rx.notified() => {}
+                }
                 if stop_flag.load(Ordering::Relaxed) {
                     break;
                 }
@@ -186,12 +193,13 @@ impl LiveTranscriptTask {
                 }
             }
         });
-        Self { stop, handle }
+        Self { stop, wake, handle }
     }
 
     /// Ask the task to stop and wait for an in-flight transcription to end.
     async fn stop(self) {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.wake.notify_one();
         let started = std::time::Instant::now();
         if tokio::time::timeout(Duration::from_secs(3), self.handle)
             .await
@@ -199,7 +207,7 @@ impl LiveTranscriptTask {
         {
             tracing::warn!("Live transcription did not stop within 3s");
         }
-        tracing::debug!("Live transcription stopped in {:?}", started.elapsed());
+        tracing::info!("Live transcription stopped in {:?}", started.elapsed());
     }
 }
 
@@ -655,8 +663,11 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                     if let Some(handle) = audio_level_handle.take() {
                         handle.abort();
                     }
-                    // Let an in-flight live transcription finish so it does
-                    // not compete with the final one for the GPU.
+                    // Stop the microphone first, so nothing said after the
+                    // stop key ends up in the recording.
+                    let stopped = recorder.stop();
+                    // Then let an in-flight live transcription finish so it
+                    // does not compete with the final one for the GPU.
                     if let Some(live) = live_task.take() {
                         live.stop().await;
                     }
@@ -674,7 +685,7 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                     )
                     .await;
 
-                    match recorder.stop() {
+                    match stopped {
                         Ok(audio_data) => {
                             let audio_data = match &vad {
                                 Some(vad) => {
