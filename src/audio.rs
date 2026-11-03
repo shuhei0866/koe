@@ -156,9 +156,17 @@ pub struct LiveAudio {
 }
 
 impl LiveAudio {
-    /// Copy of everything recorded since the recording started.
-    pub fn snapshot(&self) -> AudioData {
-        let samples = self.buffer.lock().map(|b| b.clone()).unwrap_or_default();
+    /// Copy of the last `max_secs` seconds of the recording so far.
+    ///
+    /// Only the tail is copied, so the lock that the capture callback also
+    /// takes is held briefly even on long recordings.
+    pub fn snapshot_tail(&self, max_secs: usize) -> AudioData {
+        let max_len = self.sample_rate as usize * max_secs;
+        let samples = self
+            .buffer
+            .lock()
+            .map(|b| b[b.len().saturating_sub(max_len)..].to_vec())
+            .unwrap_or_default();
         AudioData {
             samples,
             sample_rate: self.sample_rate,
@@ -327,6 +335,28 @@ impl AudioRecorder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_tail_copies_only_the_last_seconds() {
+        let live = LiveAudio {
+            buffer: Arc::new(Mutex::new((0..50).map(|i| i as f32).collect())),
+            sample_rate: 10,
+        };
+        let tail = live.snapshot_tail(2);
+        assert_eq!(tail.samples.len(), 20);
+        assert_eq!(tail.samples[0], 30.0);
+        assert_eq!(*tail.samples.last().unwrap(), 49.0);
+        assert_eq!(tail.sample_rate, 10);
+    }
+
+    #[test]
+    fn snapshot_tail_returns_short_recordings_whole() {
+        let live = LiveAudio {
+            buffer: Arc::new(Mutex::new(vec![0.5; 15])),
+            sample_rate: 10,
+        };
+        assert_eq!(live.snapshot_tail(2).samples.len(), 15);
+    }
 
     #[test]
     fn test_display_level_bounds() {

@@ -123,6 +123,10 @@ fn load_vad(config: &config::VadConfig) -> Option<Arc<vad::VoiceActivityDetector
 /// each pass stays short on long recordings. The overlay shows the tail anyway.
 const LIVE_MAX_SECS: usize = 25;
 
+/// Lower bound for `[live] interval_ms`, so the GPU is not busy the whole
+/// recording.
+const LIVE_MIN_INTERVAL_MS: u64 = 200;
+
 /// Recordings shorter than this are not live-transcribed yet.
 const LIVE_MIN_SECS: f32 = 1.0;
 
@@ -159,7 +163,9 @@ impl LiveTranscriptTask {
                 if stop_flag.load(Ordering::Relaxed) {
                     break;
                 }
-                let snapshot = audio.snapshot();
+                // Bound by recording time (before VAD), so a long pause does
+                // not bring back speech from minutes ago.
+                let snapshot = audio.snapshot_tail(LIVE_MAX_SECS);
                 let secs = snapshot.samples.len() as f32 / snapshot.sample_rate.max(1) as f32;
                 if secs < LIVE_MIN_SECS {
                     continue;
@@ -181,7 +187,6 @@ impl LiveTranscriptTask {
                 if speech.samples.is_empty() || stop_flag.load(Ordering::Relaxed) {
                     continue;
                 }
-                let speech = keep_tail(speech, LIVE_MAX_SECS);
                 match recognizer.transcribe(&speech).await {
                     // Skip punctuation-only output (e.g. "、" from a short noise).
                     Ok(text) if text != last && has_words(&text) => {
@@ -214,15 +219,6 @@ impl LiveTranscriptTask {
 /// Whether `text` contains any letter or digit (kana and kanji count).
 fn has_words(text: &str) -> bool {
     text.chars().any(char::is_alphanumeric)
-}
-
-/// Keep only the last `max_secs` seconds of `audio`.
-fn keep_tail(mut audio: audio::AudioData, max_secs: usize) -> audio::AudioData {
-    let max_len = audio.sample_rate as usize * max_secs;
-    if audio.samples.len() > max_len {
-        audio.samples.drain(..audio.samples.len() - max_len);
-    }
-    audio
 }
 
 /// How long the start cue (`message-new-instant`, about 0.43 s) can be heard
@@ -645,7 +641,9 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                                     Arc::clone(&recognizer),
                                     vad.clone(),
                                     emitter.clone(),
-                                    Duration::from_millis(config.live.interval_ms),
+                                    Duration::from_millis(
+                                        config.live.interval_ms.max(LIVE_MIN_INTERVAL_MS),
+                                    ),
                                     if config.feedback.sound_enabled {
                                         START_CUE_GUARD_MS
                                     } else {
@@ -666,11 +664,6 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                     // Stop the microphone first, so nothing said after the
                     // stop key ends up in the recording.
                     let stopped = recorder.stop();
-                    // Then let an in-flight live transcription finish so it
-                    // does not compete with the final one for the GPU.
-                    if let Some(live) = live_task.take() {
-                        live.stop().await;
-                    }
 
                     tracing::info!("<<< Recording stopped, processing...");
                     state = AppState::Processing;
@@ -684,6 +677,12 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                         &indicator_tx,
                     )
                     .await;
+
+                    // Let an in-flight live transcription finish so it does
+                    // not compete with the final one for the GPU.
+                    if let Some(live) = live_task.take() {
+                        live.stop().await;
+                    }
 
                     match stopped {
                         Ok(audio_data) => {
@@ -1001,33 +1000,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keep_tail_keeps_the_last_seconds() {
-        let audio = audio::AudioData {
-            samples: (0..50).map(|i| i as f32).collect(),
-            sample_rate: 10,
-        };
-        let tail = keep_tail(audio, 2);
-        assert_eq!(tail.samples.len(), 20);
-        assert_eq!(tail.samples[0], 30.0);
-        assert_eq!(*tail.samples.last().unwrap(), 49.0);
-    }
-
-    #[test]
     fn punctuation_only_text_has_no_words() {
         assert!(!has_words("、"));
         assert!(!has_words(" 。… "));
         assert!(has_words("えーと"));
         assert!(has_words("OK"));
         assert!(has_words("漢字"));
-    }
-
-    #[test]
-    fn keep_tail_leaves_short_audio_alone() {
-        let audio = audio::AudioData {
-            samples: vec![0.5; 15],
-            sample_rate: 10,
-        };
-        assert_eq!(keep_tail(audio, 2).samples.len(), 15);
     }
 
     #[test]

@@ -8,7 +8,7 @@ use crate::config::WhisperLocalConfig;
 use super::SpeechRecognizer;
 
 pub struct WhisperLocalRecognizer {
-    ctx: WhisperContext,
+    ctx: std::sync::Arc<WhisperContext>,
     language: String,
     prompt_hint: std::sync::Mutex<String>,
 }
@@ -33,7 +33,7 @@ impl WhisperLocalRecognizer {
         .context("failed to load whisper model")?;
 
         Ok(Self {
-            ctx,
+            ctx: std::sync::Arc::new(ctx),
             language: config.language.clone(),
             prompt_hint: std::sync::Mutex::new(String::new()),
         })
@@ -67,11 +67,10 @@ impl SpeechRecognizer for WhisperLocalRecognizer {
             .unwrap_or_default();
 
         // whisper-rs is blocking, so run in a blocking thread
-        let ctx_ptr = &self.ctx as *const WhisperContext as usize;
+        // The blocking task holds its own reference, so the context stays
+        // alive even if this recognizer is dropped (config reload, shutdown).
+        let ctx = std::sync::Arc::clone(&self.ctx);
         let result = tokio::task::spawn_blocking(move || -> Result<String> {
-            // SAFETY: WhisperContext is Send+Sync, and we hold it for the lifetime of the app
-            let ctx = unsafe { &*(ctx_ptr as *const WhisperContext) };
-
             let mut state = ctx.create_state().context("creating whisper state")?;
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
 

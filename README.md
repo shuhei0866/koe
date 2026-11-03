@@ -296,7 +296,7 @@ enabled = true     # live transcript in the overlay (local recognition only)
 interval_ms = 700  # pause between live transcriptions
 ```
 
-The start cue sound can be picked up by the microphone. While `[feedback] sound_enabled` is on, sounds that end within 0.6 s of the start of a recording are ignored. The `VAD: kept` log line shows how much of each recording was kept as speech.
+The start cue sound can be picked up by the microphone. While `[feedback] sound_enabled` is on and the VAD model is loaded, sounds that end within 0.6 s of the start of a recording are ignored (without VAD, the cue is not filtered). The `VAD: kept` log line shows how much of each recording was kept as speech.
 
 The live transcript re-transcribes the recording so far (the last 25 s at most) after each pause, and sends it as the `LiveTranscript` D-Bus signal. It is not used with `openai_api`, which bills every request. When the recording stops, Koe waits for a live pass in progress to finish, then transcribes the whole recording once more for the text that is typed.
 
