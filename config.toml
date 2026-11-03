@@ -8,6 +8,7 @@ language = "ja"
 [recognition.openai_api]
 api_key_env = "OPENAI_API_KEY"
 language = "ja"
+model = "gpt-transcribe"  # whisper-1 stops working on 2027-02-26
 
 [ai]
 engine = "claude"  # "claude" | "ollama"

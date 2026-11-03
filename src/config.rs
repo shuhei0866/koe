@@ -95,6 +95,9 @@ pub struct OpenAiApiConfig {
     pub api_key_env: String,
     #[serde(default = "default_language")]
     pub language: String,
+    /// Transcription model. `whisper-1` stops working on 2027-02-26.
+    #[serde(default = "default_openai_model")]
+    pub model: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -275,6 +278,9 @@ fn default_feedback_indicator_enabled() -> bool {
 
 fn default_language() -> String {
     "ja".to_string()
+}
+pub fn default_openai_model() -> String {
+    "gpt-transcribe".to_string()
 }
 fn default_openai_key_env() -> String {
     "OPENAI_API_KEY".to_string()
@@ -611,6 +617,16 @@ api_key_env = "ANTHROPIC_API_KEY"
         // feedback should have defaults
         assert!(config.feedback.sound_enabled);
         assert!(config.feedback.indicator_enabled);
+    }
+
+    #[test]
+    fn test_openai_model_defaults_to_gpt_transcribe() {
+        let config: OpenAiApiConfig = toml::from_str(r#"api_key_env = "OPENAI_API_KEY""#).unwrap();
+        assert_eq!(config.model, "gpt-transcribe");
+        assert_eq!(config.language, "ja");
+
+        let config: OpenAiApiConfig = toml::from_str(r#"model = "whisper-1""#).unwrap();
+        assert_eq!(config.model, "whisper-1");
     }
 
     #[test]

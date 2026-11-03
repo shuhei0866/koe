@@ -38,7 +38,7 @@ macOS has polished voice input tools with AI post-processing, but Linux has had 
 
 ## Features
 
-- **Speech Recognition**: Switch between whisper.cpp (local) and OpenAI Whisper API (cloud)
+- **Speech Recognition**: Switch between whisper.cpp (local) and OpenAI transcription API (cloud, `gpt-transcribe` by default)
 - **AI Post-Processing**: Switch between Claude API and Ollama (local LLM)
 - **Context Awareness**: Active window info is sent to the AI for context-appropriate formatting
 - **Dictionary Management**: Domain-specific term dictionaries improve recognition accuracy
@@ -64,7 +64,7 @@ flowchart TD
     VD -->|no| VD0["Stop: nothing is typed"]
     VD -->|yes| H{Speech Recognition Engine}
     H -->|whisper_local| I["whisper-rs\n(local whisper.cpp)"]
-    H -->|openai_api| J["OpenAI Whisper API\n(reqwest multipart)"]
+    H -->|openai_api| J["OpenAI transcription API\n(reqwest multipart)"]
 
     I --> K["Raw text"]
     J --> K
@@ -123,7 +123,7 @@ stateDiagram-v2
 | `src/config.rs` | TOML config file loading |
 | `src/audio.rs` | Mic recording via cpal, 16kHz resampling, WAV encoding |
 | `src/recognition/whisper_local.rs` | Local speech recognition via whisper-rs |
-| `src/recognition/openai_api.rs` | Speech recognition via OpenAI Whisper API |
+| `src/recognition/openai_api.rs` | Speech recognition via OpenAI transcription API (`gpt-transcribe`, `whisper-1`, ...) |
 | `src/ai/claude.rs` | Text post-processing via Claude API |
 | `src/ai/ollama.rs` | Text post-processing via Ollama |
 | `src/context.rs` | Active window title/class capture via x11rb |
@@ -237,7 +237,7 @@ wget -O ~/.local/share/koe/models/ggml-silero-v5.1.2.bin \
 # If using Claude for AI post-processing
 export ANTHROPIC_API_KEY="your-key-here"
 
-# If using OpenAI Whisper API for recognition
+# If using OpenAI transcription API for recognition
 export OPENAI_API_KEY="your-key-here"
 ```
 
@@ -261,6 +261,7 @@ language = "ja"
 [recognition.openai_api]
 api_key_env = "OPENAI_API_KEY"
 language = "ja"
+model = "gpt-transcribe"  # whisper-1 stops working on 2027-02-26
 
 [ai]
 engine = "claude"  # "claude" | "ollama"
@@ -328,7 +329,7 @@ koe's behavior depends on your configuration. Here's what data goes where:
 | Configuration | Data sent externally | Data stays local |
 |---|---|---|
 | **whisper-rs + Ollama** (fully local) | Nothing | Audio, transcription, window context, all processing |
-| **OpenAI Whisper API + Ollama** | Audio (to OpenAI for STT) | Window context, post-processing |
+| **OpenAI transcription API + Ollama** | Audio (to OpenAI for STT) | Window context, post-processing |
 | **whisper-rs + Claude API** | Transcribed text + active window title/app name (to Anthropic) | Audio |
 | **OpenAI API + Claude API** | Audio (to OpenAI) + transcribed text + window context (to Anthropic) | — |
 
