@@ -1,0 +1,37 @@
+# Koe の設定ファイル
+# 初回起動時に /usr/share/koe/config.toml から ~/.config/koe/config.toml へコピーされる。
+# 編集するのは ~/.config/koe/config.toml のほう（設定画面 `koe settings` からも変更できる）。
+
+[recognition]
+engine = "whisper_local"  # "whisper_local" | "openai_api"
+
+[recognition.whisper_local]
+model_path = "~/.local/share/koe/models/ggml-large-v3.bin"
+language = "ja"
+
+[recognition.openai_api]
+api_key_env = "OPENAI_API_KEY"
+language = "ja"
+model = "gpt-transcribe"  # whisper-1 は 2027-02-26 に使えなくなる
+
+[ai]
+engine = "claude"  # "claude" | "ollama"
+context_enabled = true  # false にするとウィンドウタイトル・アプリ名を AI に送信しない
+
+[ai.claude]
+api_key_env = "ANTHROPIC_API_KEY"
+model = "claude-sonnet-5-5"
+
+[ai.ollama]
+host = "http://localhost:11434"
+model = "qwen2.5:14b"
+
+[hotkey]
+mode = "push_to_talk"  # "push_to_talk" | "toggle"
+key = "Super_R"
+
+[input]
+method = "direct_type"
+
+[dictionaries]
+paths = ["/usr/share/koe/dictionaries/default.toml"]

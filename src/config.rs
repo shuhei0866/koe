@@ -443,6 +443,32 @@ pub fn store_api_key_in_keyring(env_var: &str, secret: &str) -> Result<()> {
     Ok(())
 }
 
+/// Config template installed by the .deb package.
+const PACKAGED_CONFIG_PATH: &str = "/usr/share/koe/config.toml";
+
+/// Copy the packaged config template to `dest` if `dest` does not exist yet.
+///
+/// Returns the path that was written, or `None` when there is no template
+/// (e.g. running from a source checkout).
+fn seed_config(template: &Path, dest: &Path) -> Result<Option<PathBuf>> {
+    if dest.exists() || !template.exists() {
+        return Ok(None);
+    }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating directory {}", parent.display()))?;
+    }
+    std::fs::copy(template, dest).with_context(|| {
+        format!(
+            "copying config template {} to {}",
+            template.display(),
+            dest.display()
+        )
+    })?;
+    tracing::info!("Created {} from {}", dest.display(), template.display());
+    Ok(Some(dest.to_path_buf()))
+}
+
 impl Config {
     /// Return the canonical config path (~/.config/koe/config.toml).
     pub fn config_path() -> PathBuf {
@@ -452,6 +478,10 @@ impl Config {
     }
 
     /// Load config from a TOML file, trying several default locations.
+    ///
+    /// When no config exists yet (a fresh package install), the packaged
+    /// template is copied to the canonical path first, so the user gets a
+    /// file they can edit instead of an error.
     pub fn load() -> Result<Self> {
         let candidates = vec![PathBuf::from("config.toml"), Self::config_path()];
 
@@ -459,6 +489,10 @@ impl Config {
             if path.exists() {
                 return Self::load_from(path);
             }
+        }
+
+        if let Some(path) = seed_config(Path::new(PACKAGED_CONFIG_PATH), &Self::config_path())? {
+            return Self::load_from(&path);
         }
 
         anyhow::bail!("No config.toml found. Searched: {:?}", candidates)
@@ -898,6 +932,60 @@ api_key_env = "ANTHROPIC_API_KEY"
         assert_eq!(content, "12345");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn seed_config_copies_template_into_missing_user_config() {
+        let dir = std::env::temp_dir().join("koe-test-seed-copy");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let template = dir.join("template.toml");
+        std::fs::write(&template, "[hotkey]\nkey = \"Super_R\"\n").unwrap();
+        let dest = dir.join("home/.config/koe/config.toml");
+
+        let seeded = seed_config(&template, &dest).unwrap();
+
+        assert_eq!(seeded.as_deref(), Some(dest.as_path()));
+        assert_eq!(
+            std::fs::read_to_string(&dest).unwrap(),
+            "[hotkey]\nkey = \"Super_R\"\n"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn seed_config_never_overwrites_an_existing_user_config() {
+        let dir = std::env::temp_dir().join("koe-test-seed-keep");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let template = dir.join("template.toml");
+        std::fs::write(&template, "template").unwrap();
+        let dest = dir.join("config.toml");
+        std::fs::write(&dest, "mine").unwrap();
+
+        assert_eq!(seed_config(&template, &dest).unwrap(), None);
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "mine");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn seed_config_does_nothing_without_a_packaged_template() {
+        let dir = std::env::temp_dir().join("koe-test-seed-none");
+        let _ = std::fs::remove_dir_all(&dir);
+        let dest = dir.join("config.toml");
+
+        assert_eq!(seed_config(&dir.join("missing.toml"), &dest).unwrap(), None);
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn packaged_config_template_parses() {
+        let content = include_str!("../packaging/deb/config.toml");
+        let config: Config = toml::from_str(content).unwrap();
+        assert_eq!(
+            config.dictionaries.paths,
+            vec!["/usr/share/koe/dictionaries/default.toml".to_string()]
+        );
     }
 
     /// Integration test: resolve API key from GNOME Keyring.

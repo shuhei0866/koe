@@ -4,6 +4,16 @@ on:
   push:
     tags:
       - "v*"
+  # Build and smoke-test the packages on PRs that touch packaging, without releasing.
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "packaging/**"
+      - "data/**"
+      - "gnome-extension/**"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,7 +21,8 @@ permissions:
 jobs:
   build:
     name: Build and release
-    runs-on: ubuntu-latest
+    # Built on 24.04 so the binary and the .deb dependencies also work on newer Ubuntu.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
@@ -19,18 +30,44 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libclang-dev libxkbcommon-dev libx11-dev libxi-dev libxext-dev libxtst-dev libxfixes-dev cmake libgtk-4-dev libadwaita-1-dev libvulkan-dev glslc
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
       - name: Build release binary
         run: cargo build --release --locked
       - name: Package binary
         run: |
-          ARCHIVE="koe-${GITHUB_REF_NAME}-linux-x86_64.tar.gz"
+          VERSION="v$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "koe") | .version')"
+          ARCHIVE="koe-${VERSION}-linux-x86_64.tar.gz"
           tar -czf "$ARCHIVE" -C target/release koe -C "$GITHUB_WORKSPACE/data" io.github.shuhei0866.koe.desktop
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
           sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+      - name: Package .deb
+        run: |
+          DEB="$(cargo deb --no-build --locked)"
+          cp "$DEB" .
+          DEB="$(basename "$DEB")"
+          echo "DEB=$DEB" >> "$GITHUB_ENV"
+          sha256sum "$DEB" > "$DEB.sha256"
+          dpkg-deb --info "$DEB"
+          dpkg-deb --contents "$DEB"
+      - name: Smoke-test the .deb on a clean Ubuntu 26.04
+        run: packaging/deb/smoke-test.sh "$DEB"
+      - name: Upload packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: koe-packages
+          path: |
+            ${{ env.ARCHIVE }}
+            ${{ env.ARCHIVE }}.sha256
+            ${{ env.DEB }}
+            ${{ env.DEB }}.sha256
       - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           generate_release_notes: true
           files: |
             ${{ env.ARCHIVE }}
             ${{ env.ARCHIVE }}.sha256
+            ${{ env.DEB }}
+            ${{ env.DEB }}.sha256

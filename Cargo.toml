@@ -1,6 +1,6 @@
 [package]
 name = "koe"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 description = "Ubuntu voice input system powered by Whisper + AI post-processing"
 
@@ -81,3 +81,26 @@ async-channel = { version = "2", optional = true }
 # Desktop portals for GNOME Wayland shortcuts and keyboard-only input
 ashpd = { version = "0.13", default-features = false, features = ["tokio", "global_shortcuts", "remote_desktop", "screencast", "clipboard"] }
 futures-util = "0.3"
+
+# .deb packaging (cargo deb). Built and attached to releases by .github/workflows/release.yml.
+[package.metadata.deb]
+maintainer = "Shuhei <23713413+shuhei0866@users.noreply.github.com>"
+copyright = "2026, Shuhei"
+license-file = ["LICENSE", "0"]
+section = "utils"
+priority = "optional"
+extended-description = """\
+Koe is an AI voice input for Japanese speakers on Ubuntu. Press a hotkey, \
+speak, and the text is transcribed by Whisper, formatted by Claude or Ollama, \
+and typed into the active window. Works on GNOME Wayland through the \
+standard desktop portals."""
+depends = "$auto"
+assets = [
+    ["target/release/koe", "usr/bin/", "755"],
+    ["data/io.github.shuhei0866.koe.desktop", "usr/share/applications/", "644"],
+    ["packaging/deb/koe.service", "usr/lib/systemd/user/", "644"],
+    ["packaging/deb/config.toml", "usr/share/koe/", "644"],
+    ["dictionaries/*.toml", "usr/share/koe/dictionaries/", "644"],
+    ["gnome-extension/koe-overlay@shuhei0866.github.io/*", "usr/share/gnome-shell/extensions/koe-overlay@shuhei0866.github.io/", "644"],
+    ["README.md", "usr/share/doc/koe/", "644"],
+]
