@@ -50,11 +50,21 @@ Mac や Windows には、話した内容を AI が読みやすい文章に整え
 
 ## インストール
 
-> `.deb` パッケージでの配布を準備中です。それまではビルド済みバイナリかソースから入れてください。
+### .deb パッケージ（おすすめ）
 
-### ビルド済みバイナリ
+[Releases](https://github.com/shuhei0866/koe/releases) から最新の `koe_X.Y.Z-1_amd64.deb` をダウンロードして入れます。必要なライブラリも一緒に入ります。
 
-[Releases](https://github.com/shuhei0866/koe/releases) から最新の `koe-vX.Y.Z-linux-x86_64.tar.gz` をダウンロードして展開し、`koe` を `$PATH` の通った場所（例: `~/.local/bin/`）に置きます。
+```bash
+sudo apt install ./koe_*_amd64.deb
+```
+
+desktop ファイル（Wayland でポータルが Koe を識別するのに使います）、systemd のユーザーユニット、辞書、GNOME Shell 拡張も入ります。設定ファイルは初回起動時に `~/.config/koe/config.toml` に作られます。消すときは `sudo apt remove koe` です（自分の設定・履歴・モデルは `~` に残ります）。
+
+続けて「[モデルのダウンロード](#モデルのダウンロード)」へ進みます。
+
+### ビルド済みバイナリ（tar.gz）
+
+[Releases](https://github.com/shuhei0866/koe/releases) から最新の `koe-vX.Y.Z-linux-x86_64.tar.gz` をダウンロードして展開し、`koe` を `$PATH` の通った場所（例: `~/.local/bin/`）に置きます。設定ファイルは、リポジトリの `config.toml` を `~/.config/koe/config.toml` にコピーして使ってください。
 
 Wayland では、デスクトップポータルが Koe を識別するために desktop ファイルが必要です。起動する前に、アーカイブを展開したディレクトリで次を実行してください。
 
@@ -107,8 +117,14 @@ export OPENAI_API_KEY="..."      # 音声認識に OpenAI API を使う場合
 ## 初回起動（GNOME Wayland）
 
 ```bash
-koe                    # ビルド済みバイナリを $PATH に置いた場合
+koe                    # .deb で入れた場合、ビルド済みバイナリを $PATH に置いた場合
 ./target/release/koe   # ソースからビルドした場合（リポジトリ直下で実行すると同梱の config.toml を使う）
+```
+
+.deb で入れた場合は、ログイン時に自動で起動するようにもできます（モデルをダウンロードしてから有効にしてください）。
+
+```bash
+systemctl --user enable --now koe
 ```
 
 Koe は GNOME 標準のデスクトップポータル（GlobalShortcuts / RemoteDesktop / Clipboard）を使います。
@@ -136,11 +152,17 @@ Wayland では、ターミナルの自動判定とアクティブウィンドウ
 
 GNOME Shell 50 向けの拡張を同梱しています。Koe が D-Bus で送る状態を受け取り、Shell の中にオーバーレイを描くので、入力先のフォーカスを奪いません。
 
+.deb で入れた場合は拡張もインストール済みです。一度ログアウトして入り直してから（GNOME の Wayland では、新しい拡張はログイン時に読み込まれます）、有効にします。
+
+```bash
+gnome-extensions enable koe-overlay@shuhei0866.github.io
+```
+
+ソースや tar.gz から入れた場合は、リポジトリの次のスクリプトで自分のホームに入れてから、ログアウトして入り直してください。外すときは `gnome-extensions uninstall koe-overlay@shuhei0866.github.io` です。
+
 ```bash
 ./gnome-extension/install.sh
 ```
-
-入れたらログアウトして入り直してください（GNOME の Wayland では、新しい拡張はログイン時に読み込まれます）。外すときは `gnome-extensions uninstall koe-overlay@shuhei0866.github.io` です。
 
 ## 設定（`~/.config/koe/config.toml`）
 

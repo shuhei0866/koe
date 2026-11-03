@@ -136,6 +136,16 @@ stateDiagram-v2
 
 ## Setup
 
+### .deb Package (Ubuntu, recommended)
+
+Download the latest `koe_X.Y.Z-1_amd64.deb` from the [Releases page](https://github.com/shuhei0866/koe/releases) and install it with its dependencies:
+
+```bash
+sudo apt install ./koe_*_amd64.deb
+```
+
+The package installs the desktop identity, a systemd user unit, the dictionaries and the GNOME Shell extension. The config file is created at `~/.config/koe/config.toml` on the first start. After downloading the models, you can start Koe at login with `systemctl --user enable --now koe`. Then skip to [Download Whisper Model](#download-whisper-model).
+
 ### Pre-built Binary
 
 Download the latest pre-built binary from the [Releases page](https://github.com/shuhei0866/koe/releases).
