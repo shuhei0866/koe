@@ -10,7 +10,7 @@
 
 > 🎤 Press hotkey → Speak → AI formats → Text appears in your app
 
-![Demo](assets/demo.gif)
+![Demo: speaking Japanese with katakana tech terms ("rasuto", "weirando") types "Rust" and "Wayland" correctly into Claude Code](assets/demo.gif)
 
 ![Settings UI](assets/screenshots/settings.png)
 
