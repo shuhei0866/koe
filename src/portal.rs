@@ -46,11 +46,61 @@ struct Permanent(String);
 fn is_permanent(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
         cause.downcast_ref::<Permanent>().is_some()
-            || matches!(
-                cause.downcast_ref::<ashpd::Error>(),
-                Some(ashpd::Error::Response(ResponseError::Cancelled))
-            )
+            || cause
+                .downcast_ref::<ashpd::Error>()
+                .is_some_and(is_permanent_portal_error)
     })
+}
+
+/// Portal answers that stay the same however often we ask: a declined dialog,
+/// a desktop without the portal (or with too old a version), or a request the
+/// portal rejects outright. Transport failures and `ResponseError::Other` are
+/// left to the reconnect loop, because a restarting portal produces those.
+fn is_permanent_portal_error(error: &ashpd::Error) -> bool {
+    use ashpd::{Error, PortalError};
+    matches!(
+        error,
+        Error::Response(ResponseError::Cancelled)
+            | Error::PortalNotFound(_)
+            | Error::RequiresVersion(..)
+            | Error::InvalidAppID
+            | Error::Portal(
+                PortalError::Cancelled(_)
+                    | PortalError::NotAllowed(_)
+                    | PortalError::InvalidArgument(_)
+            )
+    )
+}
+
+/// Classify a failed `Registry.Register` call. A D-Bus method error is the
+/// portal's answer (typically: no desktop file for `APP_ID`) and will not
+/// change on retry; anything else is a transport failure, such as the portal
+/// restarting mid-call, and is worth retrying.
+fn registration_error(error: zbus::Error) -> anyhow::Error {
+    match error {
+        zbus::Error::MethodError(..) => Permanent(format!(
+            "registering Koe desktop identity; install its desktop file first: {error}"
+        ))
+        .into(),
+        other => anyhow::Error::from(other).context("registering Koe desktop identity"),
+    }
+}
+
+/// The portal must grant exactly what we asked for: a keyboard, no screen
+/// streams, and the clipboard. Anything else is the user's choice in the
+/// dialog, so asking again would only repeat it.
+fn ensure_keyboard_only_grant(
+    devices: ashpd::enumflags2::BitFlags<DeviceType>,
+    has_streams: bool,
+    clipboard_enabled: bool,
+) -> Result<()> {
+    if devices != DeviceType::Keyboard || has_streams || !clipboard_enabled {
+        return Err(Permanent(
+            "Portal did not grant keyboard-only input and clipboard access".into(),
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn reconnect_delay(failures: u32) -> Duration {
@@ -107,11 +157,7 @@ async fn ensure_registered(connection: &zbus::Connection) -> Result<()> {
     registry
         .call::<_, _, ()>("Register", &(APP_ID, options))
         .await
-        .map_err(|error| {
-            Permanent(format!(
-                "registering Koe desktop identity; install its desktop file first: {error}"
-            ))
-        })?;
+        .map_err(registration_error)?;
     *registered = Some(owner);
     Ok(())
 }
@@ -161,16 +207,14 @@ impl PortalKeyboard {
             .start(&session, None, StartOptions::default())
             .await?
             .response()?;
-        if selected.devices() != DeviceType::Keyboard
-            || !selected.streams().is_empty()
-            || !selected.is_clipboard_enabled()
-        {
-            session.close().await?;
-            return Err(Permanent(
-                "Portal did not grant keyboard-only input and clipboard access".into(),
-            )
-            .into());
-        }
+        // `PortalKeyboard::new` closes the session on any error. Closing here
+        // with `?` would let a failed close replace this permanent refusal
+        // with a retryable error and show the dialog again.
+        ensure_keyboard_only_grant(
+            selected.devices(),
+            !selected.streams().is_empty(),
+            selected.is_clipboard_enabled(),
+        )?;
         tracing::info!("Wayland keyboard input permission granted");
         let text = Arc::new(Mutex::new(String::new()));
         let server_clipboard = clipboard.clone();
@@ -567,54 +611,76 @@ fn shortcut_signal(message: &zbus::Message, session_id: &str) -> Result<Option<b
 mod tests {
     use super::*;
 
+    struct PrivateBus {
+        child: std::process::Child,
+        dir: std::path::PathBuf,
+        address: String,
+    }
+
+    impl Drop for PrivateBus {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    impl PrivateBus {
+        fn start() -> Self {
+            use std::{
+                io::{BufRead, BufReader},
+                process::{Command, Stdio},
+            };
+            let dir =
+                std::env::temp_dir().join(format!("koe-portal-test-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&dir).unwrap();
+            let child = Command::new("dbus-daemon")
+                .args([
+                    "--session",
+                    "--nofork",
+                    "--print-address=1",
+                    &format!("--address=unix:dir={}", dir.display()),
+                ])
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("dbus-daemon is a test dependency");
+            let mut bus = PrivateBus {
+                child,
+                dir,
+                address: String::new(),
+            };
+            let mut address = String::new();
+            BufReader::new(bus.child.stdout.take().unwrap())
+                .read_line(&mut address)
+                .unwrap();
+            bus.address = address.trim().to_owned();
+            bus
+        }
+
+        async fn connect(&self) -> zbus::Connection {
+            zbus::connection::Builder::address(self.address.as_str())
+                .unwrap()
+                .build()
+                .await
+                .unwrap()
+        }
+
+        /// A connection that owns the portal's bus name but serves nothing.
+        async fn fake_portal(&self) -> zbus::Connection {
+            let server = self.connect().await;
+            server
+                .request_name("org.freedesktop.portal.Desktop")
+                .await
+                .unwrap();
+            server
+        }
+    }
+
     #[tokio::test]
     async fn dbus_subscription_keeps_a_queued_press_before_its_release() {
-        use std::{
-            io::{BufRead, BufReader},
-            process::{Child, Command, Stdio},
-        };
-        struct PrivateBus {
-            child: Child,
-            dir: std::path::PathBuf,
-        }
-        impl Drop for PrivateBus {
-            fn drop(&mut self) {
-                let _ = self.child.kill();
-                let _ = self.child.wait();
-                let _ = std::fs::remove_dir_all(&self.dir);
-            }
-        }
-        let dir = std::env::temp_dir().join(format!("koe-shortcut-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir(&dir).unwrap();
-        let child = Command::new("dbus-daemon")
-            .args([
-                "--session",
-                "--nofork",
-                "--print-address=1",
-                &format!("--address=unix:dir={}", dir.display()),
-            ])
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("dbus-daemon is a test dependency");
-        let mut bus = PrivateBus { child, dir };
-        let mut address = String::new();
-        BufReader::new(bus.child.stdout.take().unwrap())
-            .read_line(&mut address)
-            .unwrap();
-        let server = zbus::connection::Builder::address(address.trim())
-            .unwrap()
-            .build()
-            .await
-            .unwrap();
-        server
-            .request_name("org.freedesktop.portal.Desktop")
-            .await
-            .unwrap();
-        let client = zbus::connection::Builder::address(address.trim())
-            .unwrap()
-            .build()
-            .await
-            .unwrap();
+        let bus = PrivateBus::start();
+        let server = bus.fake_portal().await;
+        let client = bus.connect().await;
         let mut signals = ordered_shortcut_signals(&client).await.unwrap();
         const SESSION: &str = "/org/freedesktop/portal/desktop/session/test";
         // Queue the complete burst before polling the receiver. This also
@@ -728,6 +794,86 @@ mod tests {
         assert!(!is_permanent(&crashed));
         let closed = anyhow::anyhow!("Wayland shortcut session ended: the portal closed it");
         assert!(!is_permanent(&closed));
+    }
+    #[test]
+    fn missing_or_outdated_portals_are_permanent() {
+        use ashpd::{Error, PortalError};
+        let missing =
+            Error::PortalNotFound("org.freedesktop.portal.GlobalShortcuts".try_into().unwrap());
+        for error in [
+            missing,
+            Error::RequiresVersion(2, 1),
+            Error::Portal(PortalError::NotAllowed("no".into())),
+            Error::Portal(PortalError::Cancelled("no".into())),
+        ] {
+            let error = anyhow::Error::from(error).context("binding shortcut");
+            assert!(is_permanent(&error), "{error:#}");
+        }
+    }
+
+    #[test]
+    fn transient_portal_failures_are_retried() {
+        use ashpd::{Error, PortalError};
+        let io = zbus::Error::InputOutput(Arc::new(std::io::Error::other("bus reset")));
+        for error in [
+            Error::Portal(PortalError::Failed("portal busy".into())),
+            Error::NoResponse,
+            Error::Zbus(io),
+        ] {
+            let error = anyhow::Error::from(error).context("starting session");
+            assert!(!is_permanent(&error), "{error:#}");
+        }
+    }
+
+    #[test]
+    fn registration_transport_failures_are_retried() {
+        let io = zbus::Error::InputOutput(Arc::new(std::io::Error::other("portal restarting")));
+        let error = registration_error(io);
+        assert!(!is_permanent(&error));
+        assert!(format!("{error:#}").contains("portal restarting"));
+    }
+
+    #[tokio::test]
+    async fn registration_refused_by_the_portal_is_permanent() {
+        let bus = PrivateBus::start();
+        // The fake portal owns the name but has no Registry object, so the bus
+        // answers with a D-Bus method error, as a real portal does when it
+        // rejects the app id.
+        let server = bus.fake_portal().await;
+        // zbus starts answering method calls once the object server exists.
+        let _ = server.object_server();
+        let client = bus.connect().await;
+        let error = tokio::time::timeout(Duration::from_secs(5), ensure_registered(&client))
+            .await
+            .expect("Register must be answered, not hang")
+            .unwrap_err();
+        assert!(is_permanent(&error), "{error:#}");
+        assert!(format!("{error:#}").contains("desktop file"));
+    }
+
+    #[test]
+    fn incomplete_grants_are_permanent_refusals() {
+        use ashpd::enumflags2::BitFlags;
+        let keyboard: BitFlags<DeviceType> = DeviceType::Keyboard.into();
+        assert!(ensure_keyboard_only_grant(keyboard, false, true).is_ok());
+        for (devices, streams, clipboard) in [
+            (DeviceType::Keyboard | DeviceType::Pointer, false, true),
+            (BitFlags::empty(), false, true),
+            (keyboard, true, true),
+            (keyboard, false, false),
+        ] {
+            let error = ensure_keyboard_only_grant(devices, streams, clipboard).unwrap_err();
+            assert!(is_permanent(&error));
+        }
+    }
+
+    #[test]
+    fn giving_up_keeps_the_cause_in_the_alternate_format() {
+        let error = anyhow::Error::from(ashpd::Error::Response(ResponseError::Cancelled))
+            .context("restart Koe to retry");
+        let shown = format!("{error:#}");
+        assert!(shown.contains("restart Koe to retry"));
+        assert!(shown.contains("cancelled"));
     }
     #[test]
     fn japanese_and_multiline_are_clipboard_text() {

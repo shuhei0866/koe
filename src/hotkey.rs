@@ -54,7 +54,7 @@ pub fn start_hotkey_listener(
         tokio::spawn(async move {
             let keep_alive = tx.clone();
             if let Err(error) = crate::portal::run_hotkeys(mode, key, tx).await {
-                tracing::error!("Wayland voice input unavailable: {}", error);
+                tracing::error!("Wayland voice input unavailable: {error:#}");
                 // run_hotkeys already reconnects after closed sessions; it only
                 // returns on refusal or after its retry budget. Exiting here would
                 // let systemd's Restart=always show another permission dialog,
