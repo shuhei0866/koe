@@ -277,6 +277,15 @@ async fn keep_speech(
 }
 
 /// Notify D-Bus, tray icon, and indicator window of a state change.
+/// The focused app reported by the GNOME Shell extension, used on Wayland to
+/// choose the paste shortcut. None without D-Bus or before the first report.
+async fn wayland_focused_app(dbus_emitter: &Option<dbus::DbusEmitter>) -> Option<String> {
+    match dbus_emitter {
+        Some(emitter) if crate::portal::is_wayland() => emitter.focused_app().await,
+        _ => None,
+    }
+}
+
 async fn notify_state_change(
     state: &AppState,
     dbus_emitter: &Option<dbus::DbusEmitter>,
@@ -821,6 +830,7 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                                             if let Err(e) = input::paste_text(
                                                 &result.text,
                                                 active_window_id.as_deref(),
+                                                wayland_focused_app(&dbus_emitter).await.as_deref(),
                                                 &config.input,
                                             )
                                             .await
@@ -867,6 +877,7 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                                             let _ = input::paste_text(
                                                 &corrected,
                                                 active_window_id.as_deref(),
+                                                wayland_focused_app(&dbus_emitter).await.as_deref(),
                                                 &config.input,
                                             )
                                             .await;

@@ -4,5 +4,5 @@
   "description": "Shows Koe's recording/processing state as a non-focusable overlay on GNOME Wayland.",
   "shell-version": ["50"],
   "url": "https://github.com/shuhei0866/koe",
-  "version-name": "0.11.0"
+  "version-name": "0.13.0"
 }

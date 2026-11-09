@@ -4,6 +4,11 @@
 // a small overlay at the top of the screen while recording / processing /
 // typing. The overlay lives in the Shell's own UI layer and is not reactive,
 // so it never takes keyboard focus from the window koe types into.
+//
+// It also tells the daemon which app has focus (WM_CLASS only, never the
+// window title), because on Wayland the daemon cannot find out itself and
+// needs it to paste with Ctrl+Shift+V into terminals. The daemon accepts
+// this call only from the owner of org.gnome.Shell.
 
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
@@ -222,6 +227,8 @@ class KoeOverlay {
 export default class KoeOverlayExtension extends Extension {
     enable() {
         this._overlay = new KoeOverlay();
+        this._cancellable = new Gio.Cancellable();
+        this._lastSentClass = null;
         const bus = Gio.DBus.session;
 
         this._sawStateSignal = false;
@@ -242,10 +249,21 @@ export default class KoeOverlayExtension extends Extension {
                 }
             });
 
+        // When the daemon (re)starts, tell it the current focus again.
         // Hide the overlay if the daemon exits mid-recording.
         this._watchId = Gio.bus_watch_name(
             Gio.BusType.SESSION, BUS_NAME, Gio.BusNameWatcherFlags.NONE,
-            null, () => this._overlay?.hideNow());
+            () => {
+                this._lastSentClass = null;
+                this._sendFocusedApp();
+            },
+            () => {
+                this._lastSentClass = null;
+                this._overlay?.hideNow();
+            });
+
+        this._focusId = global.display.connect('notify::focus-window',
+            () => this._sendFocusedApp());
 
         this._readCurrentState();
     }
@@ -253,7 +271,6 @@ export default class KoeOverlayExtension extends Extension {
     // Signals only report changes, so if the extension is enabled (or the
     // Shell restarts) mid-recording, ask the daemon for its current state.
     _readCurrentState() {
-        this._cancellable = new Gio.Cancellable();
         Gio.DBus.session.call(
             BUS_NAME, OBJECT_PATH, 'org.freedesktop.DBus.Properties', 'Get',
             new GLib.Variant('(ss)', [INTERFACE, 'State']),
@@ -275,7 +292,38 @@ export default class KoeOverlayExtension extends Extension {
             });
     }
 
+    _focusedClass() {
+        return global.display.focus_window?.get_wm_class() ?? '';
+    }
+
+    _sendFocusedApp(wmClass = this._focusedClass(), cancellable = this._cancellable) {
+        if (wmClass === this._lastSentClass)
+            return;
+        this._lastSentClass = wmClass;
+        Gio.DBus.session.call(
+            BUS_NAME, OBJECT_PATH, INTERFACE, 'SetFocusedApp',
+            new GLib.Variant('(s)', [wmClass]), null,
+            Gio.DBusCallFlags.NO_AUTO_START, -1, cancellable,
+            (conn, result) => {
+                try {
+                    conn.call_finish(result);
+                } catch {
+                    // Daemon not running, an older daemon without the
+                    // method, or cancelled by disable(). Retry on the
+                    // next focus change.
+                    this._lastSentClass = null;
+                }
+            });
+    }
+
     disable() {
+        if (this._focusId) {
+            global.display.disconnect(this._focusId);
+            this._focusId = 0;
+        }
+        // Forget the focus so a stale terminal does not keep Ctrl+Shift+V.
+        if (this._lastSentClass)
+            this._sendFocusedApp('', null);
         this._cancellable?.cancel();
         this._cancellable = null;
         if (this._signalId) {

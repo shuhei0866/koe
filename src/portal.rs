@@ -341,7 +341,9 @@ fn validate_text(text: &str) -> Result<()> {
 
 fn paste_keys(shortcut: WaylandPasteShortcut) -> &'static [i32] {
     match shortcut {
-        WaylandPasteShortcut::CtrlV => &[0xffe3, 0x76],
+        // Callers resolve Auto first (input::resolve_wayland_paste_shortcut);
+        // treat an unresolved Auto like the GUI default.
+        WaylandPasteShortcut::Auto | WaylandPasteShortcut::CtrlV => &[0xffe3, 0x76],
         WaylandPasteShortcut::CtrlShiftV => &[0xffe3, 0xffe1, 0x76],
     }
 }

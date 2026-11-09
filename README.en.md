@@ -179,18 +179,18 @@ desktop-file-install --dir="$HOME/.local/share/applications" \
   --set-key=Exec --set-value="$(pwd)/target/release/koe" data/io.github.shuhei0866.koe.desktop
 ```
 
-Keep the intended text field focused while dictating. Japanese and multiline text are pasted through the clipboard; the transcript replaces the clipboard contents. The default paste shortcut is Ctrl+V. For terminal applications that require Ctrl+Shift+V, set this in `config.toml`:
+Keep the intended text field focused while dictating. Japanese and multiline text are pasted through the clipboard; the transcript replaces the clipboard contents. The paste shortcut follows the target app: Ctrl+Shift+V for terminals (Ptyxis, GNOME Terminal, Ghostty, kitty, and others) and Ctrl+V for everything else. Automatic switching needs the GNOME Shell extension below; without it, Koe uses Ctrl+V. To always use one shortcut, set it in `config.toml`:
 
 ```toml
 [input]
-wayland_paste_shortcut = "ctrl_shift_v"
+wayland_paste_shortcut = "auto"   # or "ctrl_v" / "ctrl_shift_v" to pin one
 ```
 
-Use `"ctrl_v"` for GUI applications. Automatic terminal detection and active-window context are unavailable on Wayland. Koe's own floating indicator window is disabled to preserve the target's focus; sound feedback and history remain available. Declining or revoking a portal permission stops voice input until an explicit Koe restart, without repeated prompts or an X11 fallback.
+On Wayland, Koe itself cannot inspect the target window, so the extension detects terminals and reports only the focused app's WM_CLASS to Koe, never the window title. Active-window context for AI processing is unavailable on Wayland. Koe's own floating indicator window is disabled to preserve the target's focus; sound feedback and history remain available. Declining or revoking a portal permission stops voice input until an explicit Koe restart, without repeated prompts or an X11 fallback.
 
 #### Recording overlay (GNOME Shell extension)
 
-To see the recording state on screen under Wayland, install the bundled GNOME Shell extension (GNOME Shell 50). It listens to Koe's D-Bus state signals and draws the overlay inside the Shell, so it never takes focus from the window you are dictating into.
+To see the recording state on screen under Wayland, install the bundled GNOME Shell extension (GNOME Shell 50). It listens to Koe's D-Bus state signals and draws the overlay inside the Shell, so it never takes focus from the window you are dictating into. The extension also detects whether the focused app is a terminal, so Koe can pick the right paste shortcut.
 
 ```bash
 ./gnome-extension/install.sh

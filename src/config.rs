@@ -184,7 +184,10 @@ pub struct InputConfig {
 #[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum WaylandPasteShortcut {
+    /// Ctrl+Shift+V when the GNOME Shell extension reports that a terminal
+    /// has focus, Ctrl+V otherwise (including when the extension is absent).
     #[default]
+    Auto,
     CtrlV,
     CtrlShiftV,
 }
@@ -552,9 +555,13 @@ impl Config {
 mod tests {
     use super::*;
     #[test]
-    fn legacy_input_config_defaults_to_gui_paste_and_preserves_terminal_choice() {
+    fn legacy_input_config_defaults_to_auto_paste_and_preserves_explicit_choice() {
         let legacy: InputConfig = toml::from_str("method = 'direct_type'").unwrap();
-        assert_eq!(legacy.wayland_paste_shortcut, WaylandPasteShortcut::CtrlV);
+        assert_eq!(legacy.wayland_paste_shortcut, WaylandPasteShortcut::Auto);
+        let auto: InputConfig = toml::from_str("wayland_paste_shortcut = 'auto'").unwrap();
+        assert_eq!(auto.wayland_paste_shortcut, WaylandPasteShortcut::Auto);
+        let gui: InputConfig = toml::from_str("wayland_paste_shortcut = 'ctrl_v'").unwrap();
+        assert_eq!(gui.wayland_paste_shortcut, WaylandPasteShortcut::CtrlV);
         let terminal: InputConfig =
             toml::from_str("wayland_paste_shortcut = 'ctrl_shift_v'").unwrap();
         assert_eq!(

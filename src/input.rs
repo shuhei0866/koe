@@ -1,8 +1,17 @@
 use anyhow::{Context, Result};
 
-/// Known terminal WM_CLASS values (lowercase for comparison).
+use crate::config::WaylandPasteShortcut;
+
+/// Known terminal WM_CLASS / app-id fragments (lowercase for comparison).
+/// Matched as substrings, so `org.gnome.ptyxis` and `com.mitchellh.ghostty`
+/// are covered by `ptyxis` and `ghostty`.
 const TERMINAL_CLASSES: &[&str] = &[
     "gnome-terminal",
+    "ptyxis",
+    "ghostty",
+    "org.gnome.console",
+    "kgx",
+    "blackbox",
     "kitty",
     "alacritty",
     "wezterm",
@@ -15,6 +24,28 @@ const TERMINAL_CLASSES: &[&str] = &[
     "st-256color",
     "sakura",
 ];
+
+/// Whether a WM_CLASS (or Wayland app id) belongs to a terminal emulator.
+pub fn is_terminal_class(class: &str) -> bool {
+    let class = class.to_lowercase();
+    TERMINAL_CLASSES.iter().any(|t| class.contains(t))
+}
+
+/// Pick the concrete paste shortcut for Wayland. An explicit setting always
+/// wins; `Auto` uses the focused app reported by the GNOME Shell extension
+/// and falls back to Ctrl+V when nothing has been reported.
+pub fn resolve_wayland_paste_shortcut(
+    setting: WaylandPasteShortcut,
+    focused_app: Option<&str>,
+) -> WaylandPasteShortcut {
+    match setting {
+        WaylandPasteShortcut::Auto => match focused_app {
+            Some(class) if is_terminal_class(class) => WaylandPasteShortcut::CtrlShiftV,
+            _ => WaylandPasteShortcut::CtrlV,
+        },
+        explicit => explicit,
+    }
+}
 
 /// Capture the current active window ID via xdotool.
 /// Call this before showing overlays (e.g. indicator window) to preserve
@@ -48,8 +79,7 @@ fn is_window_terminal(window_id: &str) -> bool {
         return false;
     };
 
-    let class_str = String::from_utf8_lossy(&output.stdout).to_lowercase();
-    TERMINAL_CLASSES.iter().any(|t| class_str.contains(t))
+    is_terminal_class(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// Type text into the active window using xdotool.
@@ -78,13 +108,24 @@ pub async fn type_text(text: &str) -> Result<()> {
 /// Type text using clipboard paste via xclip + xdotool.
 /// Uses a pre-captured window ID to determine terminal vs GUI paste key.
 /// If `target_window` is None, falls back to detecting the current active window.
+/// On Wayland, `focused_app` is the WM_CLASS reported by the GNOME Shell
+/// extension (None when the extension is not running).
 pub async fn paste_text(
     text: &str,
     target_window: Option<&str>,
+    focused_app: Option<&str>,
     options: &crate::config::InputConfig,
 ) -> Result<()> {
     if crate::portal::is_wayland() {
-        return crate::portal::paste_text(text, options.wayland_paste_shortcut).await;
+        let shortcut = resolve_wayland_paste_shortcut(options.wayland_paste_shortcut, focused_app);
+        tracing::info!(
+            "Pasting {} chars via {:?} (setting={:?}, focused_app={:?})",
+            text.len(),
+            shortcut,
+            options.wayland_paste_shortcut,
+            focused_app
+        );
+        return crate::portal::paste_text(text, shortcut).await;
     }
     if text.is_empty() {
         return Ok(());
@@ -150,4 +191,45 @@ pub async fn paste_text(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_classes_cover_wayland_app_ids() {
+        for class in [
+            "org.gnome.Ptyxis",
+            "com.mitchellh.ghostty",
+            "gnome-terminal-server",
+            "org.gnome.Console",
+            "kitty",
+            "Alacritty",
+            "org.wezfurlong.wezterm",
+        ] {
+            assert!(is_terminal_class(class), "{class} should be a terminal");
+        }
+        for class in ["firefox", "google-chrome", "Slack", "org.gnome.TextEditor", ""] {
+            assert!(!is_terminal_class(class), "{class} should not be a terminal");
+        }
+    }
+
+    #[test]
+    fn auto_follows_the_focused_app_and_falls_back_to_ctrl_v() {
+        use WaylandPasteShortcut::*;
+        let resolve = resolve_wayland_paste_shortcut;
+        assert_eq!(resolve(Auto, Some("com.mitchellh.ghostty")), CtrlShiftV);
+        assert_eq!(resolve(Auto, Some("firefox")), CtrlV);
+        assert_eq!(resolve(Auto, None), CtrlV);
+    }
+
+    #[test]
+    fn explicit_setting_wins_over_the_focused_app() {
+        use WaylandPasteShortcut::*;
+        let resolve = resolve_wayland_paste_shortcut;
+        assert_eq!(resolve(CtrlV, Some("org.gnome.Ptyxis")), CtrlV);
+        assert_eq!(resolve(CtrlShiftV, Some("firefox")), CtrlShiftV);
+        assert_eq!(resolve(CtrlShiftV, None), CtrlShiftV);
+    }
 }
