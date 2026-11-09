@@ -18,6 +18,8 @@
 
 macOS has polished voice input tools with AI post-processing, but Linux has had no equivalent — just raw STT with no intelligence behind it.
 
+The story behind koe and how it works on GNOME Wayland are written up (in Japanese) on [Zenn](https://zenn.dev/sal9000/articles/koe-ubuntu-voice-input).
+
 **koe** fills that gap:
 
 - **AI post-processing** — raw transcription is refined by an LLM that understands your context
