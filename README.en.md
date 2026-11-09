@@ -179,7 +179,7 @@ desktop-file-install --dir="$HOME/.local/share/applications" \
   --set-key=Exec --set-value="$(pwd)/target/release/koe" data/io.github.shuhei0866.koe.desktop
 ```
 
-Keep the intended text field focused while dictating. Japanese and multiline text are pasted through the clipboard; the transcript replaces the clipboard contents. The paste shortcut follows the target app: Ctrl+Shift+V for terminals (Ptyxis, GNOME Terminal, Ghostty, kitty, and others) and Ctrl+V for everything else. Automatic switching needs the GNOME Shell extension below; without it, Koe uses Ctrl+V. To always use one shortcut, set it in `config.toml`:
+Keep the intended text field focused while dictating. Japanese and multiline text are pasted through the clipboard; the transcript replaces the clipboard contents. The paste shortcut follows the target app: Ctrl+Shift+V for terminals (Ptyxis, GNOME Terminal, Ghostty, kitty, and others) and Ctrl+V for everything else. Automatic switching needs the GNOME Shell extension below; without it, Koe uses Ctrl+V. A terminal Koe does not recognize also gets Ctrl+V and may not paste; pin `ctrl_shift_v` for it, or open an issue so it can be added. To always use one shortcut, set it in `config.toml`:
 
 ```toml
 [input]

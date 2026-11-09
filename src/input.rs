@@ -7,6 +7,8 @@ use crate::config::WaylandPasteShortcut;
 /// are covered by `ptyxis` and `ghostty`.
 const TERMINAL_CLASSES: &[&str] = &[
     "gnome-terminal",
+    // GNOME Terminal's native Wayland app id; Mutter reports it as WM_CLASS.
+    "org.gnome.terminal",
     "ptyxis",
     "ghostty",
     "org.gnome.console",
@@ -203,6 +205,7 @@ mod tests {
             "org.gnome.Ptyxis",
             "com.mitchellh.ghostty",
             "gnome-terminal-server",
+            "org.gnome.Terminal",
             "org.gnome.Console",
             "kitty",
             "Alacritty",
@@ -210,8 +213,17 @@ mod tests {
         ] {
             assert!(is_terminal_class(class), "{class} should be a terminal");
         }
-        for class in ["firefox", "google-chrome", "Slack", "org.gnome.TextEditor", ""] {
-            assert!(!is_terminal_class(class), "{class} should not be a terminal");
+        for class in [
+            "firefox",
+            "google-chrome",
+            "Slack",
+            "org.gnome.TextEditor",
+            "",
+        ] {
+            assert!(
+                !is_terminal_class(class),
+                "{class} should not be a terminal"
+            );
         }
     }
 
