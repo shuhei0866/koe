@@ -68,7 +68,7 @@ chrono = { version = "0.4", features = ["serde"] }
 csv = "1"
 
 # Misc
-dirs = "6"
+dirs = "7"
 shellexpand = "3"
 hound = "3.5"
 
