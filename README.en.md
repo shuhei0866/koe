@@ -325,6 +325,17 @@ The start cue sound can be picked up by the microphone. While `[feedback] sound_
 
 The live transcript re-transcribes the recording so far (the last 25 s at most) after each pause, and sends it as the `LiveTranscript` D-Bus signal. It is not used with `openai_api`, which bills every request. When the recording stops, Koe waits for a live pass in progress to finish, then transcribes the whole recording once more for the text that is typed.
 
+### Custom Claude API base URL
+
+To route requests through an internal API gateway or similar, set `base_url` under `[ai.claude]`. Koe appends `/v1/messages` and sends the key in the `x-api-key` header.
+
+```toml
+[ai.claude]
+base_url = "https://llm-gateway.example.com"  # → https://llm-gateway.example.com/v1/messages
+```
+
+Only `https` is accepted, so the key is never sent in plain text (`http` is allowed for localhost only).
+
 ## Dictionary File
 
 `dictionaries/default.toml`:

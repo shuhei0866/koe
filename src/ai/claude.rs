@@ -11,6 +11,38 @@ use super::{build_system_prompt, ConsolidationResult, Learning, ProcessResult, T
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 
+/// Resolve the Messages API endpoint, honoring a custom base URL.
+pub fn messages_url(config: &ClaudeConfig) -> Result<String> {
+    match &config.base_url {
+        Some(base_url) => anthropic_messages_url(base_url),
+        None => Ok(ANTHROPIC_API_URL.to_string()),
+    }
+}
+
+/// Append the Messages API path to a custom base URL, as the Anthropic SDKs do.
+fn anthropic_messages_url(base_url: &str) -> Result<String> {
+    let url = reqwest::Url::parse(base_url)
+        .with_context(|| format!("invalid ai.claude.base_url: {:?}", base_url))?;
+    // The API key travels with every request; allow plain HTTP only to this machine.
+    let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+    if !(url.scheme() == "https" || url.scheme() == "http" && loopback) {
+        anyhow::bail!(
+            "ai.claude.base_url must use https (http is allowed only for localhost): {:?}",
+            base_url
+        );
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        anyhow::bail!(
+            "ai.claude.base_url must not have a query or fragment: {:?}",
+            base_url
+        );
+    }
+    Ok(format!(
+        "{}/v1/messages",
+        url.as_str().trim_end_matches('/')
+    ))
+}
+
 /// Read the response body as JSON, enforcing a maximum size limit.
 ///
 /// Uses chunk-based streaming so that a response without Content-Length
@@ -49,7 +81,28 @@ pub(crate) async fn read_response_json(
     serde_json::from_slice(&buf).context("parsing API response JSON")
 }
 
+fn is_loopback_http(endpoint: &str) -> bool {
+    reqwest::Url::parse(endpoint).is_ok_and(|url| {
+        url.scheme() == "http"
+            && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+    })
+}
+
+/// Never follow redirects: reqwest keeps `x-api-key` on a redirect to another
+/// host, so following one could send the key past the `base_url` checks.
+fn http_client_builder(endpoint: &str) -> reqwest::ClientBuilder {
+    let builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
+    // Plain HTTP is permitted only for local traffic. An environment proxy
+    // would send the API key and transcript outside that boundary.
+    if is_loopback_http(endpoint) {
+        builder.no_proxy()
+    } else {
+        builder
+    }
+}
+
 pub struct ClaudeProcessor {
+    endpoint: String,
     api_key: String,
     model: String,
     client: reqwest::Client,
@@ -58,15 +111,18 @@ pub struct ClaudeProcessor {
 
 impl ClaudeProcessor {
     pub fn new(config: &ClaudeConfig, max_response_bytes: usize) -> Result<Self> {
+        let endpoint = messages_url(config)?;
         let api_key = crate::config::resolve_api_key(&config.api_key_env)?;
 
+        let client = http_client_builder(&endpoint)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .context("building Claude HTTP client")?;
         Ok(Self {
+            endpoint,
             api_key,
             model: config.model.clone(),
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .context("building Claude HTTP client")?,
+            client,
             max_response_bytes,
         })
     }
@@ -87,13 +143,14 @@ impl ClaudeProcessor {
             .context("sending request to Claude API")?;
         if !response.status().is_success() {
             let status = response.status();
+            let host = response.url().host_str().unwrap_or_default().to_string();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Claude API error ({}): {}", status, body);
+            anyhow::bail!("Claude API error ({}) from {}: {}", status, host, body);
         }
         read_response_json(response, self.max_response_bytes).await
     }
 
-    // The production entry point always supplies ANTHROPIC_API_URL. Keeping the
+    // The production entry point always supplies self.endpoint. Keeping the
     // transport boundary here lets regression tests exercise the entire exchange.
     async fn process_at_endpoint(
         &self,
@@ -406,11 +463,17 @@ pub fn parse_consolidation_response(text: &str) -> Result<ConsolidationResult> {
 
 /// Send a minimal test request to verify API key and model.
 /// Returns the model's response text on success.
-pub fn test_connectivity(api_key: &str, model: &str) -> Result<String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .context("building HTTP client")?;
+pub fn test_connectivity(endpoint: &str, api_key: &str, model: &str) -> Result<String> {
+    let builder = reqwest::blocking::Client::builder()
+        // See http_client_builder.
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(15));
+    let builder = if is_loopback_http(endpoint) {
+        builder.no_proxy()
+    } else {
+        builder
+    };
+    let client = builder.build().context("building HTTP client")?;
 
     let mut body = json!({
         "model": model,
@@ -425,7 +488,7 @@ pub fn test_connectivity(api_key: &str, model: &str) -> Result<String> {
     apply_model_settings(&mut body);
 
     let response = client
-        .post(ANTHROPIC_API_URL)
+        .post(endpoint)
         .header("x-api-key", api_key)
         .header("anthropic-version", ANTHROPIC_VERSION)
         .header("content-type", "application/json")
@@ -435,8 +498,9 @@ pub fn test_connectivity(api_key: &str, model: &str) -> Result<String> {
 
     let status = response.status();
     if !status.is_success() {
+        let host = response.url().host_str().unwrap_or_default().to_string();
         let body = response.text().unwrap_or_default();
-        anyhow::bail!("API error ({}): {}", status, body);
+        anyhow::bail!("API error ({}) from {}: {}", status, host, body);
     }
 
     let resp: serde_json::Value = response.json().context("parsing Claude response")?;
@@ -458,7 +522,7 @@ impl TextProcessor for ClaudeProcessor {
                 context,
                 dictionary,
                 memory_context,
-                ANTHROPIC_API_URL,
+                &self.endpoint,
             )
             .await?;
 
@@ -486,7 +550,7 @@ impl TextProcessor for ClaudeProcessor {
 
         let response = self
             .client
-            .post(ANTHROPIC_API_URL)
+            .post(&self.endpoint)
             // Consolidation can summarize a large memory; keep a bounded but
             // longer deadline than interactive dictation requests.
             .timeout(std::time::Duration::from_secs(120))
@@ -500,8 +564,14 @@ impl TextProcessor for ClaudeProcessor {
 
         if !response.status().is_success() {
             let status = response.status();
+            let host = response.url().host_str().unwrap_or_default().to_string();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Claude consolidation error ({}): {}", status, body);
+            anyhow::bail!(
+                "Claude consolidation error ({}) from {}: {}",
+                status,
+                host,
+                body
+            );
         }
 
         let resp = read_response_json(response, self.max_response_bytes).await?;
@@ -516,8 +586,57 @@ impl TextProcessor for ClaudeProcessor {
 mod exchange_tests {
     use super::*;
     use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
     use std::time::{Duration, Instant};
+
+    fn accept(listener: &TcpListener) -> TcpStream {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(e) => panic!("expected API request: {e}"),
+            }
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+    }
+
+    /// Read one request and return its body.
+    fn read_request(stream: &mut TcpStream) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let (header_end, length) = loop {
+            let mut buffer = [0; 4096];
+            let count = stream.read(&mut buffer).unwrap();
+            assert!(count > 0);
+            bytes.extend_from_slice(&buffer[..count]);
+            if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                let headers = String::from_utf8_lossy(&bytes[..end]);
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (key, value) = line.split_once(':')?;
+                        key.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap();
+                break (end + 4, length);
+            }
+        };
+        while bytes.len() < header_end + length {
+            let mut buffer = [0; 4096];
+            let count = stream.read(&mut buffer).unwrap();
+            assert!(count > 0);
+            bytes.extend_from_slice(&buffer[..count]);
+        }
+        bytes[header_end..header_end + length].to_vec()
+    }
 
     fn mock_api(
         responses: Vec<(u16, serde_json::Value)>,
@@ -528,49 +647,8 @@ mod exchange_tests {
         let handle = std::thread::spawn(move || {
             let mut requests = Vec::new();
             for (status, response) in responses {
-                let deadline = Instant::now() + Duration::from_secs(5);
-                let mut stream = loop {
-                    match listener.accept() {
-                        Ok((stream, _)) => break stream,
-                        Err(e)
-                            if e.kind() == std::io::ErrorKind::WouldBlock
-                                && Instant::now() < deadline =>
-                        {
-                            std::thread::sleep(Duration::from_millis(5));
-                        }
-                        Err(e) => panic!("expected API request: {e}"),
-                    }
-                };
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(5)))
-                    .unwrap();
-                let mut bytes = Vec::new();
-                let (header_end, length) = loop {
-                    let mut buffer = [0; 4096];
-                    let count = stream.read(&mut buffer).unwrap();
-                    assert!(count > 0);
-                    bytes.extend_from_slice(&buffer[..count]);
-                    if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
-                        let headers = String::from_utf8_lossy(&bytes[..end]);
-                        let length = headers
-                            .lines()
-                            .find_map(|line| {
-                                let (key, value) = line.split_once(':')?;
-                                key.eq_ignore_ascii_case("content-length")
-                                    .then(|| value.trim().parse::<usize>().unwrap())
-                            })
-                            .unwrap();
-                        break (end + 4, length);
-                    }
-                };
-                while bytes.len() < header_end + length {
-                    let mut buffer = [0; 4096];
-                    let count = stream.read(&mut buffer).unwrap();
-                    assert!(count > 0);
-                    bytes.extend_from_slice(&buffer[..count]);
-                }
-                requests
-                    .push(serde_json::from_slice(&bytes[header_end..header_end + length]).unwrap());
+                let mut stream = accept(&listener);
+                requests.push(serde_json::from_slice(&read_request(&mut stream)).unwrap());
                 if status == 0 {
                     std::thread::sleep(Duration::from_millis(500));
                     continue;
@@ -585,11 +663,198 @@ mod exchange_tests {
 
     fn processor() -> ClaudeProcessor {
         ClaudeProcessor {
+            endpoint: ANTHROPIC_API_URL.into(),
             api_key: "synthetic-test-key".into(),
             model: "claude-sonnet-5-5".into(),
-            client: reqwest::Client::builder().no_proxy().build().unwrap(),
+            client: http_client_builder(ANTHROPIC_API_URL)
+                .no_proxy()
+                .build()
+                .unwrap(),
             max_response_bytes: 1024 * 1024,
         }
+    }
+
+    /// Answer one request with a 307 to a second listener, and return the first
+    /// endpoint and the second listener, which must never receive a connection.
+    fn redirect_to_another_host() -> (String, TcpListener, std::thread::JoinHandle<()>) {
+        let target = TcpListener::bind("127.0.0.1:0").unwrap();
+        target.set_nonblocking(true).unwrap();
+        let location = format!("http://{}/v1/messages", target.local_addr().unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let endpoint = format!("http://{}/v1/messages", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let mut stream = accept(&listener);
+            read_request(&mut stream);
+            write!(stream, "HTTP/1.1 307 Temporary Redirect\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        (endpoint, target, handle)
+    }
+
+    fn assert_never_contacted(target: &TcpListener) {
+        assert!(matches!(
+            target.accept(),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
+        ));
+    }
+
+    #[tokio::test]
+    async fn processing_does_not_follow_redirects_with_the_api_key() {
+        let (endpoint, target, server) = redirect_to_another_host();
+        let mut processor = processor();
+        // The target never answers; time out instead of hanging if it is reached.
+        processor.client = http_client_builder(&endpoint)
+            .no_proxy()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let error = processor
+            .process_at_endpoint(
+                "合成入力",
+                &WindowContext::default(),
+                &Dictionary::default(),
+                "",
+                &endpoint,
+            )
+            .await
+            .unwrap_err();
+        server.join().unwrap();
+        assert!(error.to_string().contains("307"), "{error}");
+        assert_never_contacted(&target);
+    }
+
+    #[test]
+    fn connection_test_does_not_follow_redirects_with_the_api_key() {
+        let (endpoint, target, server) = redirect_to_another_host();
+        let error =
+            test_connectivity(&endpoint, "synthetic-test-key", "claude-sonnet-5-5").unwrap_err();
+        server.join().unwrap();
+        assert!(error.to_string().contains("307"), "{error}");
+        assert_never_contacted(&target);
+    }
+
+    // Run the real entry points in child processes so proxy environment changes
+    // cannot race with other tests or depend on the developer's proxy settings.
+    #[test]
+    fn loopback_proxy_child() {
+        let Ok(mode) = std::env::var("KOE_TEST_PROXY_MODE") else {
+            return;
+        };
+        let base_url = std::env::var("KOE_TEST_BASE_URL").unwrap();
+        let config = ClaudeConfig {
+            api_key_env: "KOE_TEST_SYNTHETIC_KEY".into(),
+            model: "claude-sonnet-5-5".into(),
+            base_url: Some(base_url),
+        };
+        if mode == "processing" {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let result = runtime.block_on(async {
+                ClaudeProcessor::new(&config, 1024 * 1024)
+                    .unwrap()
+                    .process(
+                        "synthetic speech",
+                        &WindowContext::default(),
+                        &Dictionary::default(),
+                        "",
+                    )
+                    .await
+                    .unwrap()
+            });
+            assert_eq!(result.text, "OK");
+        } else {
+            assert_eq!(
+                test_connectivity(
+                    &messages_url(&config).unwrap(),
+                    "synthetic-proxy-test-key",
+                    &config.model,
+                )
+                .unwrap(),
+                "OK"
+            );
+        }
+    }
+
+    fn optional_api() -> (String, std::thread::JoinHandle<bool>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let handle = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(3)))
+                            .unwrap();
+                        read_request(&mut stream);
+                        let body = r#"{"content":[{"type":"text","text":"OK"}]}"#;
+                        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                        return true;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if Instant::now() >= deadline {
+                            return false;
+                        }
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accepting synthetic request: {error}"),
+                }
+            }
+        });
+        (base_url, handle)
+    }
+
+    fn assert_loopback_bypasses_environment_proxy(mode: &str) {
+        let (origin, origin_server) = optional_api();
+        let (proxy, proxy_server) = optional_api();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child.args([
+            "--exact",
+            "ai::claude::exchange_tests::loopback_proxy_child",
+            "--nocapture",
+        ]);
+        for name in [
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ] {
+            child.env(name, &proxy);
+        }
+        child.env_remove("NO_PROXY").env_remove("no_proxy");
+        let output = child
+            .env("KOE_TEST_PROXY_MODE", mode)
+            .env("KOE_TEST_BASE_URL", origin)
+            .env("KOE_TEST_SYNTHETIC_KEY", "synthetic-proxy-test-key")
+            .output()
+            .unwrap();
+        let origin_contacted = origin_server.join().unwrap();
+        let proxy_contacted = proxy_server.join().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(
+            !proxy_contacted,
+            "loopback HTTP sent the request through an environment proxy"
+        );
+        assert!(
+            origin_contacted,
+            "loopback HTTP did not reach the local origin"
+        );
+    }
+
+    #[test]
+    fn processing_loopback_bypasses_environment_proxy() {
+        assert_loopback_bypasses_environment_proxy("processing");
+    }
+
+    #[test]
+    fn connectivity_loopback_bypasses_environment_proxy() {
+        assert_loopback_bypasses_environment_proxy("connectivity");
     }
 
     fn tool_turn() -> serde_json::Value {
@@ -764,6 +1029,62 @@ mod exchange_tests {
         let older = build_request_body("claude-sonnet-4-6", "system", "input", None);
         assert!(older.get("thinking").is_none());
         assert!(older.get("output_config").is_none());
+    }
+
+    fn with_base_url(base_url: Option<&str>) -> ClaudeConfig {
+        ClaudeConfig {
+            api_key_env: "SYNTHETIC_KEY".into(),
+            model: "claude-sonnet-5-5".into(),
+            base_url: base_url.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn messages_url_defaults_to_the_anthropic_api() {
+        assert_eq!(
+            messages_url(&with_base_url(None)).unwrap(),
+            ANTHROPIC_API_URL
+        );
+    }
+
+    #[test]
+    fn base_url_gets_the_messages_path() {
+        for (base_url, expected) in [
+            (
+                "https://llm.example.com",
+                "https://llm.example.com/v1/messages",
+            ),
+            (
+                "https://llm.example.com/",
+                "https://llm.example.com/v1/messages",
+            ),
+            (
+                "https://llm.example.com/anthropic/",
+                "https://llm.example.com/anthropic/v1/messages",
+            ),
+            ("http://localhost:8080", "http://localhost:8080/v1/messages"),
+        ] {
+            assert_eq!(
+                messages_url(&with_base_url(Some(base_url))).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn base_url_rejects_unsafe_or_ambiguous_urls() {
+        for base_url in [
+            "http://llm.example.com",
+            "llm.example.com",
+            "ftp://llm.example.com",
+            "https://llm.example.com/?key=x",
+            "https://llm.example.com/#x",
+        ] {
+            assert!(
+                messages_url(&with_base_url(Some(base_url))).is_err(),
+                "{base_url}"
+            );
+        }
     }
 
     #[test]
@@ -1133,7 +1454,7 @@ mod tests {
         let api_key = crate::config::resolve_api_key("ANTHROPIC_API_KEY")
             .expect("ANTHROPIC_API_KEY must be available (env or keyring)");
 
-        let result = test_connectivity(&api_key, "claude-sonnet-4-6");
+        let result = test_connectivity(ANTHROPIC_API_URL, &api_key, "claude-sonnet-4-6");
         match &result {
             Ok(text) => println!("Claude responded: {}", text),
             Err(e) => panic!("Claude API test failed: {}", e),
@@ -1149,7 +1470,7 @@ mod tests {
         let api_key = crate::config::resolve_api_key("ANTHROPIC_API_KEY")
             .expect("ANTHROPIC_API_KEY must be available (env or keyring)");
 
-        let result = test_connectivity(&api_key, "claude-sonnet-4-6");
+        let result = test_connectivity(ANTHROPIC_API_URL, &api_key, "claude-sonnet-4-6");
         match &result {
             Ok(text) => println!("claude-sonnet-4-6 OK: {}", text),
             Err(e) => println!("claude-sonnet-4-6 FAILED: {}", e),

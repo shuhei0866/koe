@@ -34,6 +34,8 @@ fn read_model_selection(combo: &libadwaita::ComboRow, custom: &libadwaita::Entry
 /// All widget handles needed to read settings on save.
 struct Widgets {
     input_config: InputConfig,
+    // Not editable in the UI yet; carried over so saving keeps it.
+    claude_base_url: Option<String>,
     hotkey_mode: libadwaita::ComboRow,
     hotkey_key: libadwaita::EntryRow,
     rec_engine: libadwaita::ComboRow,
@@ -91,6 +93,7 @@ impl Widgets {
                         &self.claude_model_combo,
                         &self.claude_model_custom,
                     ),
+                    base_url: self.claude_base_url.clone(),
                 }),
                 ollama: Some(OllamaConfig {
                     host: self.ollama_host.text().to_string(),
@@ -146,8 +149,14 @@ pub fn build(app: &libadwaita::Application) {
     window.add(&build_mic_test_page());
     window.add(&history_page);
 
+    let claude_config = config
+        .ai
+        .claude
+        .clone()
+        .unwrap_or_else(default_claude_config);
     let widgets = Rc::new(Widgets {
         input_config: config.input.clone(),
+        claude_base_url: claude_config.base_url,
         hotkey_mode,
         hotkey_key,
         rec_engine,
@@ -180,17 +189,7 @@ fn save_from_widgets(widgets: &Widgets, window: Option<&libadwaita::PreferencesW
     let path = Config::config_path();
     // Preserve fields not exposed in the UI (e.g. context_enabled, limits)
     if let Ok(existing) = Config::load_from(&path) {
-        config.ai.context_enabled = existing.ai.context_enabled;
-        config.limits = existing.limits;
-        // The model is not exposed in the UI; keep the configured one.
-        if let (Some(new), Some(old)) = (
-            config.recognition.openai_api.as_mut(),
-            existing.recognition.openai_api,
-        ) {
-            new.model = old.model;
-        }
-        config.vad = existing.vad;
-        config.live = existing.live;
+        config = preserve_unexposed_config(config, existing);
     }
     match config.save(&path) {
         Ok(()) => {
@@ -211,6 +210,34 @@ fn save_from_widgets(widgets: &Widgets, window: Option<&libadwaita::PreferencesW
     }
 }
 
+fn preserve_unexposed_config(mut config: Config, existing: Config) -> Config {
+    // base_url has no widget. Preserve the latest file value, including removal,
+    // rather than the snapshot taken when the settings window opened.
+    if let Some(claude) = config.ai.claude.as_mut() {
+        claude.base_url = existing.ai.claude.and_then(|old| old.base_url);
+    }
+    config.ai.context_enabled = existing.ai.context_enabled;
+    config.limits = existing.limits;
+    // The model is not exposed in the UI; keep the configured one.
+    if let (Some(new), Some(old)) = (
+        config.recognition.openai_api.as_mut(),
+        existing.recognition.openai_api,
+    ) {
+        new.model = old.model;
+    }
+    config.vad = existing.vad;
+    config.live = existing.live;
+    config
+}
+
+fn default_claude_config() -> ClaudeConfig {
+    ClaudeConfig {
+        api_key_env: "ANTHROPIC_API_KEY".to_string(),
+        model: "claude-sonnet-5-5".to_string(),
+        base_url: None,
+    }
+}
+
 fn default_config() -> Config {
     Config {
         recognition: RecognitionConfig {
@@ -228,10 +255,7 @@ fn default_config() -> Config {
         ai: AiConfig {
             engine: AiEngine::Claude,
             context_enabled: true,
-            claude: Some(ClaudeConfig {
-                api_key_env: "ANTHROPIC_API_KEY".to_string(),
-                model: "claude-sonnet-5-5".to_string(),
-            }),
+            claude: Some(default_claude_config()),
             ollama: Some(OllamaConfig {
                 host: "http://localhost:11434".to_string(),
                 model: "qwen2.5:14b".to_string(),
@@ -479,10 +503,11 @@ fn build_ai_page(
         .title("Claude")
         .build();
 
-    let cc = config.ai.claude.clone().unwrap_or(ClaudeConfig {
-        api_key_env: "ANTHROPIC_API_KEY".to_string(),
-        model: "claude-sonnet-5-5".to_string(),
-    });
+    let cc = config
+        .ai
+        .claude
+        .clone()
+        .unwrap_or_else(default_claude_config);
 
     let claude_key_row = libadwaita::EntryRow::builder()
         .title("API key env variable")
@@ -540,8 +565,11 @@ fn build_ai_page(
     let claude_combo_for_test = claude_model_combo.clone();
     let claude_custom_for_test = claude_model_custom.clone();
     test_claude_row.connect_activated(move |row| {
-        let api_key_env = claude_key_for_test.text().to_string();
-        let model = read_model_selection(&claude_combo_for_test, &claude_custom_for_test);
+        let claude_config = ClaudeConfig {
+            api_key_env: claude_key_for_test.text().to_string(),
+            model: read_model_selection(&claude_combo_for_test, &claude_custom_for_test),
+            ..cc.clone()
+        };
 
         row.set_subtitle("Testing...");
         let row_clone = row.clone();
@@ -549,7 +577,7 @@ fn build_ai_page(
 
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(test_claude_api(&api_key_env, &model));
+            let _ = tx.send(test_claude_api(&claude_config));
         });
 
         gtk4::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
@@ -737,10 +765,11 @@ fn build_ai_page(
 
 // ─── API Test Functions ─────────────────────────────────────────────────────
 
-fn test_claude_api(api_key_env: &str, model: &str) -> Result<String, String> {
-    let api_key = crate::config::resolve_api_key(api_key_env).map_err(|e| e.to_string())?;
+fn test_claude_api(config: &ClaudeConfig) -> Result<String, String> {
+    let endpoint = crate::ai::claude::messages_url(config).map_err(|e| e.to_string())?;
+    let api_key = crate::config::resolve_api_key(&config.api_key_env).map_err(|e| e.to_string())?;
 
-    crate::ai::claude::test_connectivity(&api_key, model)
+    crate::ai::claude::test_connectivity(&endpoint, &api_key, &config.model)
         .map(|text| truncate(&text, 60).to_string())
         .map_err(|e| e.to_string())
 }
@@ -956,4 +985,39 @@ fn remove_autostart_entry() -> anyhow::Result<()> {
         std::fs::remove_file(&path)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod base_url_save_tests {
+    use super::*;
+
+    #[test]
+    fn saving_preserves_latest_file_base_url_and_widget_edits() {
+        for (snapshot, latest) in [
+            (None, Some("https://new.example")),
+            (Some("https://old.example"), Some("https://new.example")),
+            (Some("https://old.example"), None),
+        ] {
+            let mut widgets_config = default_config();
+            let claude = widgets_config.ai.claude.as_mut().unwrap();
+            claude.base_url = snapshot.map(String::from);
+            claude.model = "model-from-widget".into();
+            claude.api_key_env = "KEY_FROM_WIDGET".into();
+            let mut file_config = default_config();
+            file_config.ai.claude.as_mut().unwrap().base_url = latest.map(String::from);
+
+            let path = std::env::temp_dir()
+                .join(format!("koe-base-url-save-{}.toml", uuid::Uuid::new_v4()));
+            file_config.save(&path).unwrap();
+            let merged =
+                preserve_unexposed_config(widgets_config, Config::load_from(&path).unwrap());
+            merged.save(&path).unwrap();
+            let saved = Config::load_from(&path).unwrap().ai.claude.unwrap();
+            std::fs::remove_file(path).unwrap();
+
+            assert_eq!(saved.base_url.as_deref(), latest);
+            assert_eq!(saved.model, "model-from-widget");
+            assert_eq!(saved.api_key_env, "KEY_FROM_WIDGET");
+        }
+    }
 }

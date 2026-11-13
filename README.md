@@ -235,6 +235,17 @@ interval_ms = 700  # ライブ文字起こしの間隔
 
 ライブ文字起こしは、話の切れ目ごとにそこまでの録音（最大で直近 25 秒）を認識し直し、D-Bus の `LiveTranscript` シグナルで送ります。リクエストごとに課金される `openai_api` では使いません。録音を止めると、実行中のライブ認識を待ってから録音全体をもう一度認識し、その結果を入力します。
 
+### Claude API の接続先を変える
+
+社内の API ゲートウェイなどを経由させたいときは、`[ai.claude]` に `base_url` を書きます。Koe は `base_url` の後ろに `/v1/messages` を付けて送り、キーは `x-api-key` ヘッダで渡します。
+
+```toml
+[ai.claude]
+base_url = "https://llm-gateway.example.com"  # → https://llm-gateway.example.com/v1/messages
+```
+
+キーを平文で送らないよう、`https` だけを受け付けます（`http` は localhost のみ）。
+
 ## 用語辞書
 
 `dictionaries/default.toml`:

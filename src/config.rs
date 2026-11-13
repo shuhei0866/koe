@@ -148,6 +148,10 @@ pub struct ClaudeConfig {
     pub api_key_env: String,
     #[serde(default = "default_claude_model")]
     pub model: String,
+    /// Base URL replacing `https://api.anthropic.com`, e.g. an internal API
+    /// gateway. `/v1/messages` is appended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -616,6 +620,7 @@ mod tests {
                 claude: Some(ClaudeConfig {
                     api_key_env: "ANTHROPIC_API_KEY".to_string(),
                     model: "claude-sonnet-4-6".to_string(),
+                    base_url: None,
                 }),
                 ollama: None,
             },
@@ -685,6 +690,16 @@ api_key_env = "ANTHROPIC_API_KEY"
         // feedback should have defaults
         assert!(config.feedback.sound_enabled);
         assert!(config.feedback.indicator_enabled);
+    }
+
+    #[test]
+    fn test_claude_base_url_is_optional() {
+        let config: ClaudeConfig = toml::from_str(r#"model = "claude-sonnet-5-5""#).unwrap();
+        assert_eq!(config.base_url, None);
+
+        let config: ClaudeConfig =
+            toml::from_str(r#"base_url = "https://llm.example.com""#).unwrap();
+        assert_eq!(config.base_url.as_deref(), Some("https://llm.example.com"));
     }
 
     #[test]
