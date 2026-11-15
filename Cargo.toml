@@ -34,7 +34,7 @@ rdev = "0.5"
 enigo = { version = "0.6", features = ["x11rb"] }
 
 # X11 window info
-x11rb = { version = "0.13", features = ["all-extensions"] }
+x11rb = { version = "0.14", features = ["all-extensions"] }
 
 # Clipboard
 arboard = "3"
