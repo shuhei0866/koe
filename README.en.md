@@ -89,10 +89,10 @@ flowchart TD
     R --> T["Formatted text"]
     S --> T
 
-    T --> U["Type into active window\n(enigo)"]
+    T --> U["Type into active window\n(xdotool / desktop portal)"]
     U --> V{Input result}
     V -->|Success| W["Done → back to Idle"]
-    V -->|Failure| X["Paste via clipboard\n(arboard + Ctrl+V)"]
+    V -->|Failure| X["Paste via clipboard\n(xclip + xdotool / desktop portal)"]
     X --> W
 ```
 
@@ -112,7 +112,7 @@ stateDiagram-v2
 ## Architecture
 
 ```
-[Hotkey (rdev)] → [Audio Capture (cpal)] → [Speech Recognition] → [AI Post-Processing] → [Text Input (enigo)]
+[Hotkey (rdev)] → [Audio Capture (cpal)] → [Speech Recognition] → [AI Post-Processing] → [Text Input (xdotool / portal)]
                                                     ↑                      ↑
                                             whisper-rs / OpenAI     Claude / Ollama
                                                                           ↑
@@ -132,7 +132,7 @@ stateDiagram-v2
 | `src/ai/claude.rs` | Text post-processing via Claude API |
 | `src/ai/ollama.rs` | Text post-processing via Ollama |
 | `src/context.rs` | Active window title/class capture via x11rb |
-| `src/input.rs` | Direct typing via enigo + clipboard paste fallback |
+| `src/input.rs` | Text input via xdotool (X11) or the desktop portal (Wayland), with clipboard paste |
 | `src/hotkey.rs` | Global hotkey via rdev (Push-to-Talk / Toggle) |
 | `src/dictionary.rs` | TOML dictionary loading and term replacement |
 
@@ -358,9 +358,7 @@ notes = "Prefer English for programming language and tool names"
 | Audio recording | `cpal` |
 | Local speech recognition | `whisper-rs` (whisper.cpp bindings) |
 | Global hotkey | `rdev` |
-| Keyboard input | `enigo` |
 | X11 window info | `x11rb` |
-| Clipboard | `arboard` |
 | HTTP client | `reqwest` (rustls) |
 | Async runtime | `tokio` |
 | Config file | `serde` + `toml` |
