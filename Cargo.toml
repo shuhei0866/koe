@@ -19,7 +19,7 @@ async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
 
 # Audio capture
-cpal = "0.17"
+cpal = "0.18"
 
 # Speech recognition - local
 whisper-rs = "0.16"

@@ -237,7 +237,7 @@ impl AudioRecorder {
 
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => device.build_input_stream(
-                &config.into(),
+                config.into(),
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
                     let mut buf = buffer.lock().unwrap();
                     // Convert to mono by averaging channels, compute RMS incrementally
@@ -263,7 +263,7 @@ impl AudioRecorder {
                 let buffer = self.buffer.clone();
                 let rms_sender_i16 = self.rms_sender.clone();
                 device.build_input_stream(
-                    &config.into(),
+                    config.into(),
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
                         let mut buf = buffer.lock().unwrap();
                         let mut sum_sq = 0.0f32;
