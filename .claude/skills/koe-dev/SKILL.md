@@ -6,7 +6,7 @@ koe（Ubuntu 向け Rust 音声入力ツール）の開発を並列エージェ�
 
 - リポジトリ: `~/koe`
 - 言語: Rust (edition 2021)
-- 主要依存: tokio, cpal, whisper-rs, rdev, enigo, x11rb, GTK4/libadwaita（設定 UI）
+- 主要依存: tokio, cpal, whisper-rs, rdev, x11rb, GTK4/libadwaita（設定 UI）
 - 設定ファイル: `~/.config/koe/config.toml`
 
 ## モジュール構成
@@ -27,7 +27,7 @@ src/
 ├── config.rs        # 設定ファイル読み書き
 ├── dictionary.rs    # ユーザー辞書
 ├── hotkey.rs        # グローバルホットキー (rdev)
-└── input.rs         # テキスト入力シミュレーション (enigo)
+└── input.rs         # テキスト入力 (xdotool / ポータル)
 ```
 
 ## 並列ワークストリーム
