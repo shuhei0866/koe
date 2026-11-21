@@ -14,6 +14,26 @@
 
 ![Settings UI](assets/screenshots/settings.png)
 
+## Your first sentence
+
+This guide is for a fresh install on Ubuntu 26.04 with GNOME on Wayland (x86_64).
+
+1. **Install Koe.** Download `koe_…_amd64.deb` from the [latest release](https://github.com/shuhei0866/koe/releases/latest) and follow the [.deb instructions](#deb-package-ubuntu-recommended).
+2. **Set up recognition and text cleanup.** [Download the Whisper model](#download-whisper-model), then choose how to clean up the transcribed text.
+   - **Claude API.** Set your Anthropic API key using the [API key instructions](#api-keys). Koe transcribes locally with Whisper, then sends the resulting text to Claude for cleanup.
+   - **Ollama.** [Install and start Ollama](https://docs.ollama.com/linux) and download a model (for example, `ollama pull qwen2.5:3b`). Open `koe settings`, select `Ollama` as the `AI Post-Processing Engine`, choose that model, and close the window. Both recognition and cleanup run locally.
+3. **Start Koe.** Run `koe` in a terminal while the desktop is unlocked. Allow keyboard and clipboard access and register the dictation shortcut in the dialogs.
+4. **Try dictating into a text editor.** Focus a blank document, hold the registered key (right Super by default), say 「ラストで音声入力を試しています」 (Japanese is the default recognition language), and release the key. If text appears in the document, the first test worked. The text editor test works with the GNOME Shell extension turned off.
+
+### Share your trial result
+
+[Share what worked or where you got stuck on GitHub](https://github.com/shuhei0866/koe/issues/new?title=Koe+trial+feedback&body=Ubuntu+version+%2F+target+app+%2F+what+worked+or+where+you+got+stuck). One line with your Ubuntu version and the app you tried, if applicable, is enough.
+
+- `Ubuntu 26.04 / Text Editor / My first sentence appeared`
+- `Ubuntu 26.04 / Text Editor / I heard the recording cue, but no text appeared`
+
+You can report a result without logs or audio.
+
 ## Why koe?
 
 macOS has polished voice input tools with AI post-processing, but Linux has had no equivalent — just raw STT with no intelligence behind it.
