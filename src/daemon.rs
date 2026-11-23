@@ -309,6 +309,61 @@ async fn notify_state_change(
     }
 }
 
+pub(crate) struct FinalTranscript {
+    pub text: String,
+    pub learnings: Vec<ai::Learning>,
+    pub fallback: Option<anyhow::Error>,
+}
+
+pub(crate) async fn format_transcript(
+    raw: &str,
+    processor: &dyn ai::TextProcessor,
+    window: &context::WindowContext,
+    dictionary: &dictionary::Dictionary,
+    memory: &str,
+    allow_processing: bool,
+) -> FinalTranscript {
+    let corrected = dictionary.apply_terms(raw);
+    let result = if allow_processing {
+        processor
+            .process(&corrected, window, dictionary, memory)
+            .await
+    } else {
+        Err(ai::chatgpt::Problem::LocalWhisperRequired.into())
+    };
+    match result {
+        Ok(result) => FinalTranscript {
+            text: result.text,
+            learnings: result.learnings,
+            fallback: None,
+        },
+        Err(error) => FinalTranscript {
+            text: corrected,
+            learnings: Vec::new(),
+            fallback: Some(error),
+        },
+    }
+}
+
+impl FinalTranscript {
+    pub(crate) async fn paste(
+        &self,
+        window: Option<&str>,
+        focused_app: Option<&str>,
+        options: &config::InputConfig,
+        allow_direct_type: bool,
+    ) -> Result<()> {
+        match input::paste_text(&self.text, window, focused_app, options).await {
+            Err(_)
+                if self.fallback.is_none() && allow_direct_type && !crate::portal::is_wayland() =>
+            {
+                input::type_text(&self.text).await
+            }
+            result => result,
+        }
+    }
+}
+
 pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Result<()> {
     // Load memory (auto-learned data)
     let memory_dir = config.memory_dir();
@@ -354,7 +409,8 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
     // Initialize speech recognizer
     let mut recognizer =
         recognition::create_recognizer(&config.recognition).context("creating recognizer")?;
-    tracing::info!("Speech recognizer ready: {:?}", config.recognition.engine);
+    let mut recognition_engine = config.recognition.engine.clone();
+    tracing::info!("Speech recognizer ready: {:?}", recognition_engine);
 
     // Initialize voice activity detection (optional; falls back to no VAD)
     let mut vad = load_vad(&config.vad);
@@ -362,7 +418,8 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
     // Initialize AI processor
     let mut processor = ai::create_processor(&config.ai, config.limits.max_api_response_bytes)
         .context("creating AI processor")?;
-    tracing::info!("AI processor ready: {:?}", config.ai.engine);
+    let mut processing_engine = config.ai.engine.clone();
+    tracing::info!("AI processor ready: {:?}", processing_engine);
 
     // Initialize audio recorder
     let mut recorder = audio::AudioRecorder::new().context("creating audio recorder")?;
@@ -462,6 +519,7 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
 
     let mut state = AppState::Idle;
     let mut last_consolidation_entry_count: usize = 0;
+    let mut last_chatgpt_problem = None;
 
     // Main event loop
     loop {
@@ -508,6 +566,7 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                             match recognition::create_recognizer(&new_config.recognition) {
                                 Ok(new_recognizer) => {
                                     recognizer = new_recognizer;
+                                    recognition_engine = new_config.recognition.engine.clone();
                                     tracing::info!(
                                         "Recognizer reloaded: {:?}",
                                         new_config.recognition.engine
@@ -528,6 +587,7 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                             ) {
                                 Ok(new_processor) => {
                                     processor = new_processor;
+                                    processing_engine = new_config.ai.engine.clone();
                                     tracing::info!(
                                         "AI processor reloaded: {:?}",
                                         new_config.ai.engine
@@ -718,7 +778,8 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                             }
 
                             // Get window context before processing
-                            let window_ctx = if config.ai.context_enabled {
+                            let use_chatgpt = processing_engine == config::AiEngine::Chatgpt;
+                            let window_ctx = if config.ai.context_enabled && !use_chatgpt {
                                 context::get_active_window_context().unwrap_or_default()
                             } else {
                                 context::WindowContext::default()
@@ -742,146 +803,110 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                                         continue;
                                     }
 
-                                    tracing::info!("Raw transcription: {}", raw_text);
+                                    if !use_chatgpt {
+                                        tracing::info!("Raw transcription: {}", raw_text);
+                                    }
 
-                                    // Apply dictionary term corrections first
-                                    let corrected = dictionary.apply_terms(&raw_text);
+                                    let memory_context = if use_chatgpt {
+                                        String::new()
+                                    } else {
+                                        mem.format_for_prompt()
+                                    };
+                                    let result = format_transcript(
+                                        &raw_text,
+                                        processor.as_ref(),
+                                        &window_ctx,
+                                        &dictionary,
+                                        &memory_context,
+                                        !use_chatgpt
+                                            || matches!(
+                                                recognition_engine,
+                                                config::RecognitionEngine::WhisperLocal
+                                            ),
+                                    )
+                                    .await;
 
-                                    // AI post-processing
-                                    let memory_context = mem.format_for_prompt();
-                                    match processor
-                                        .process(
-                                            &corrected,
-                                            &window_ctx,
-                                            &dictionary,
-                                            &memory_context,
+                                    if let Some(error) = &result.fallback {
+                                        tracing::warn!("AI processing failed; using dictionary-corrected text: {error}");
+                                    } else if !use_chatgpt {
+                                        tracing::info!(
+                                            "Processed text: {} (learnings: {})",
+                                            result.text,
+                                            result.learnings.len()
+                                        );
+                                    }
+                                    if config.memory.enabled && !result.learnings.is_empty() {
+                                        for learning in &result.learnings {
+                                            match learning {
+                                                ai::Learning::Term { from, to } => {
+                                                    tracing::info!(
+                                                        "Learned term: {} → {}",
+                                                        from,
+                                                        to
+                                                    );
+                                                    mem.add_term(from, to);
+                                                }
+                                                ai::Learning::Context { category, content } => {
+                                                    tracing::info!(
+                                                        "Learned context [{}]: {}",
+                                                        category,
+                                                        content
+                                                    );
+                                                    mem.add_context(category, content);
+                                                }
+                                            }
+                                        }
+                                        if let Err(e) = mem.save() {
+                                            tracing::error!("Failed to save memory: {}", e);
+                                        }
+
+                                        let hint = mem.format_for_whisper_hint();
+                                        recognizer.set_prompt_hint(&hint);
+                                        tracing::debug!(
+                                            "Whisper hint updated: {} terms",
+                                            mem.terms.len()
+                                        );
+                                    }
+
+                                    if let Some(hist) = &mut history {
+                                        if let Err(e) = hist.add_entry(&raw_text, &result.text) {
+                                            tracing::warn!("Failed to save history entry: {}", e);
+                                        }
+                                    }
+
+                                    state = AppState::Typing;
+                                    notify_state_change(
+                                        &state,
+                                        &dbus_emitter,
+                                        #[cfg(feature = "gui")]
+                                        &tray_handle,
+                                        #[cfg(feature = "gui")]
+                                        &indicator_tx,
+                                    )
+                                    .await;
+                                    let focused_app = wayland_focused_app(&dbus_emitter).await;
+                                    if let Err(e) = result
+                                        .paste(
+                                            active_window_id.as_deref(),
+                                            focused_app.as_deref(),
+                                            &config.input,
+                                            !use_chatgpt,
                                         )
                                         .await
                                     {
-                                        Ok(result) => {
-                                            tracing::info!(
-                                                "Processed text: {} (learnings: {})",
-                                                result.text,
-                                                result.learnings.len()
-                                            );
+                                        tracing::error!("Failed to insert text: {}", e);
+                                    }
 
-                                            // Save learnings to memory (only when memory is enabled)
-                                            if config.memory.enabled && !result.learnings.is_empty()
-                                            {
-                                                for learning in &result.learnings {
-                                                    match learning {
-                                                        ai::Learning::Term { from, to } => {
-                                                            tracing::info!(
-                                                                "Learned term: {} → {}",
-                                                                from,
-                                                                to
-                                                            );
-                                                            mem.add_term(from, to);
-                                                        }
-                                                        ai::Learning::Context {
-                                                            category,
-                                                            content,
-                                                        } => {
-                                                            tracing::info!(
-                                                                "Learned context [{}]: {}",
-                                                                category,
-                                                                content
-                                                            );
-                                                            mem.add_context(category, content);
-                                                        }
-                                                    }
-                                                }
-                                                if let Err(e) = mem.save() {
-                                                    tracing::error!("Failed to save memory: {}", e);
-                                                }
-
-                                                // Update Whisper hint with new terms
-                                                let hint = mem.format_for_whisper_hint();
-                                                recognizer.set_prompt_hint(&hint);
-                                                tracing::debug!(
-                                                    "Whisper hint updated: {} terms",
-                                                    mem.terms.len()
-                                                );
-                                            }
-
-                                            // Save to history (AI-processed path)
-                                            if let Some(ref mut hist) = history {
-                                                if let Err(e) =
-                                                    hist.add_entry(&raw_text, &result.text)
-                                                {
-                                                    tracing::warn!(
-                                                        "Failed to save history entry: {}",
-                                                        e
-                                                    );
-                                                }
-                                            }
-
-                                            state = AppState::Typing;
-                                            notify_state_change(
-                                                &state,
-                                                &dbus_emitter,
-                                                #[cfg(feature = "gui")]
-                                                &tray_handle,
-                                                #[cfg(feature = "gui")]
-                                                &indicator_tx,
-                                            )
-                                            .await;
-
-                                            if let Err(e) = input::paste_text(
-                                                &result.text,
-                                                active_window_id.as_deref(),
-                                                wayland_focused_app(&dbus_emitter).await.as_deref(),
-                                                &config.input,
-                                            )
-                                            .await
-                                            {
-                                                tracing::error!("Failed to paste text: {}", e);
-                                                if !crate::portal::is_wayland() {
-                                                    if let Err(e2) =
-                                                        input::type_text(&result.text).await
-                                                    {
-                                                        tracing::error!(
-                                                            "Direct type also failed: {}",
-                                                            e2
-                                                        );
-                                                    }
-                                                }
-                                            }
+                                    let problem = result.fallback.as_ref().and_then(|error| {
+                                        error.downcast_ref::<ai::chatgpt::Problem>().copied()
+                                    });
+                                    if problem != last_chatgpt_problem {
+                                        if let (Some(problem), Some(emitter)) =
+                                            (problem, &dbus_emitter)
+                                        {
+                                            emitter.notify_chatgpt_fallback(problem);
                                         }
-                                        Err(e) => {
-                                            tracing::error!("AI processing failed: {}", e);
-                                            tracing::info!("Falling back to raw transcription");
-
-                                            // Save to history (fallback path: raw = processed)
-                                            if let Some(ref mut hist) = history {
-                                                if let Err(e) =
-                                                    hist.add_entry(&raw_text, &corrected)
-                                                {
-                                                    tracing::warn!(
-                                                        "Failed to save history entry: {}",
-                                                        e
-                                                    );
-                                                }
-                                            }
-
-                                            state = AppState::Typing;
-                                            notify_state_change(
-                                                &state,
-                                                &dbus_emitter,
-                                                #[cfg(feature = "gui")]
-                                                &tray_handle,
-                                                #[cfg(feature = "gui")]
-                                                &indicator_tx,
-                                            )
-                                            .await;
-                                            let _ = input::paste_text(
-                                                &corrected,
-                                                active_window_id.as_deref(),
-                                                wayland_focused_app(&dbus_emitter).await.as_deref(),
-                                                &config.input,
-                                            )
-                                            .await;
-                                        }
+                                        last_chatgpt_problem = problem;
                                     }
                                 }
                                 Err(e) => {
@@ -909,7 +934,8 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                     // Check if memory needs consolidation
                     // Only trigger if entries grew since last consolidation
                     let current_entries = mem.total_entries();
-                    if config.memory.enabled
+                    if processing_engine != config::AiEngine::Chatgpt
+                        && config.memory.enabled
                         && mem.needs_consolidation(config.memory.consolidation_threshold)
                         && current_entries > last_consolidation_entry_count
                     {

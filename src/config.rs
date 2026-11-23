@@ -140,6 +140,7 @@ pub struct AiConfig {
 pub enum AiEngine {
     Claude,
     Ollama,
+    Chatgpt,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

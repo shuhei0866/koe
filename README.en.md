@@ -21,6 +21,7 @@ This guide is for a fresh install on Ubuntu 26.04 with GNOME on Wayland (x86_64)
 1. **Install Koe.** Download `koe_…_amd64.deb` from the [latest release](https://github.com/shuhei0866/koe/releases/latest) and follow the [.deb instructions](#deb-package-ubuntu-recommended).
 2. **Set up recognition and text cleanup.** [Download the Whisper model](#download-whisper-model), then choose how to clean up the transcribed text.
    - **Claude API.** Set your Anthropic API key using the [API key instructions](#api-keys). Koe transcribes locally with Whisper, then sends the resulting text to Claude for cleanup.
+   - **ChatGPT.** In `koe settings`, choose `Whisper Local` on the `Recognition` page and `ChatGPT` on the `AI` page. Select `Continue with ChatGPT` and authorize ChatGPT plan usage in your browser. Choose an available model and close Settings.
    - **Ollama.** [Install and start Ollama](https://docs.ollama.com/linux) and download a model (for example, `ollama pull qwen2.5:3b`). Open `koe settings`, select `Ollama` as the `AI Post-Processing Engine`, choose that model, and close the window. Both recognition and cleanup run locally.
 3. **Start Koe.** Run `koe` in a terminal while the desktop is unlocked. Allow keyboard and clipboard access and register the dictation shortcut in the dialogs.
 4. **Try dictating into a text editor.** Focus a blank document, hold the registered key (right Super by default), say 「ラストで音声入力を試しています」 (Japanese is the default recognition language), and release the key. If text appears in the document, the first test worked. The text editor test works with the GNOME Shell extension turned off.
@@ -52,7 +53,7 @@ The story behind koe and how it works on GNOME Wayland are written up (in Japane
 
 | Feature | **koe** | nerd-dictation | Google Docs Voice | No voice input |
 |---|---|---|---|---|
-| AI post-processing | Yes (Claude / Ollama) | No | No | — |
+| AI post-processing | Yes (Claude / Ollama / ChatGPT) | No | No | — |
 | Context-aware formatting | Yes (active window) | No | No | — |
 | Fully local operation | Yes (whisper.cpp + Ollama) | Yes | No | — |
 | Custom dictionary | Yes (declarative TOML + AI-aware) | Yes (Python scripting) | No | — |
@@ -63,7 +64,7 @@ The story behind koe and how it works on GNOME Wayland are written up (in Japane
 ## Features
 
 - **Speech Recognition**: Switch between whisper.cpp (local) and OpenAI transcription API (cloud, `gpt-transcribe` by default)
-- **AI Post-Processing**: Switch between Claude API and Ollama (local LLM)
+- **AI Post-Processing**: Choose Claude API, Ollama (local LLM), or ChatGPT plan usage
 - **Context Awareness**: Active window info is sent to the AI for context-appropriate formatting
 - **Dictionary Management**: Domain-specific term dictionaries improve recognition accuracy
 - **Silence Removal (VAD)**: Silero VAD drops silence before recognition, so silent recordings type nothing instead of hallucinated sentences
@@ -97,23 +98,14 @@ flowchart TD
     K --> L["Dictionary term replacement\n(dictionary.rs)"]
     L --> M["Corrected text"]
 
-    M --> N["Get active window info\n(x11rb)"]
-    N --> O["Window title + app name"]
-
-    O --> P["Build AI post-processing prompt\ncorrected text + context + dictionary"]
-
-    P --> Q{AI Engine}
-    Q -->|claude| R["Claude API\n(reqwest)"]
-    Q -->|ollama| S["Ollama API\n(reqwest)"]
-
-    R --> T["Formatted text"]
-    S --> T
-
-    T --> U["Type into active window\n(xdotool / desktop portal)"]
-    U --> V{Input result}
-    V -->|Success| W["Done → back to Idle"]
-    V -->|Failure| X["Paste via clipboard\n(xclip + xdotool / desktop portal)"]
-    X --> W
+    M --> N["Apply dictionary term corrections locally"]
+    N --> Q{AI Engine}
+    Q -->|claude or ollama| P["Build the prompt with context and the dictionary"]
+    Q -->|chatgpt| A1["ChatGPT Responses API: corrected text + fixed formatting instructions"]
+    P --> T["Choose formatted text or dictionary-corrected fallback"]
+    A1 --> T
+    T --> U["Paste into active window (xdotool / desktop portal)"]
+    U --> W["Done → back to Idle"]
 ```
 
 ## State Machine
@@ -134,7 +126,7 @@ stateDiagram-v2
 ```
 [Hotkey (rdev)] → [Audio Capture (cpal)] → [Speech Recognition] → [AI Post-Processing] → [Text Input (xdotool / portal)]
                                                     ↑                      ↑
-                                            whisper-rs / OpenAI     Claude / Ollama
+                                            whisper-rs / OpenAI     Claude / Ollama / ChatGPT
                                                                           ↑
                                                               [Context Capture (x11rb)]
                                                               [Dictionary Manager]
@@ -310,7 +302,7 @@ language = "ja"
 model = "gpt-transcribe"  # whisper-1 stops working on 2027-02-26
 
 [ai]
-engine = "claude"  # "claude" | "ollama"
+engine = "claude"  # "claude" | "ollama" | "chatgpt"
 
 [ai.claude]
 api_key_env = "ANTHROPIC_API_KEY"
@@ -390,9 +382,12 @@ koe's behavior depends on your configuration. Here's what data goes where:
 
 | Configuration | Data sent externally | Data stays local |
 |---|---|---|
+| **whisper-rs + ChatGPT** | Dictionary-corrected text and fixed formatting instructions (to OpenAI) | Audio, window context, dictionary files, and learned notes |
 | **whisper-rs + Ollama** (fully local) | Nothing | Audio, transcription, window context, all processing |
 | **OpenAI transcription API + Ollama** | Audio (to OpenAI for STT) | Window context, post-processing |
 | **whisper-rs + Claude API** | Transcribed text + active window title/app name (to Anthropic) | Audio |
 | **OpenAI API + Claude API** | Audio (to OpenAI) + transcribed text + window context (to Anthropic) | — |
+
+ChatGPT credentials are stored per account and workspace in GNOME Keyring. Use `Disconnect` on the `AI` page to sign out. If you reach a usage limit, review your usage and select `Resume formatting` when ready. If formatting fails, Koe pastes the dictionary-corrected transcript. [ChatGPT usage settings](https://chatgpt.com/settings/usage)
 
 **Note on context awareness:** When using cloud AI (Claude API), koe sends the active window title and application name along with the transcribed text. Window titles may contain sensitive information (file paths, URLs, email subjects). For maximum privacy, use the fully local setup (whisper-rs + Ollama).

@@ -1,12 +1,15 @@
 [package]
 name = "koe"
-version = "0.14.1"
+version = "0.15.0"
 edition = "2021"
 description = "Ubuntu voice input system powered by Whisper + AI post-processing"
 
 [features]
 default = ["gui", "vulkan"]
-gui = ["dep:gtk4", "dep:libadwaita", "dep:ksni", "dep:async-channel"]
+gui = [
+    "dep:gtk4", "dep:libadwaita", "dep:ksni", "dep:async-channel",
+    "dep:base64", "dep:getrandom", "dep:subtle", "dep:sha2", "dep:jsonwebtoken",
+]
 cuda = ["whisper-rs/cuda"]
 vulkan = ["whisper-rs/vulkan"]
 
@@ -25,7 +28,7 @@ cpal = "0.18"
 whisper-rs = "0.16"
 
 # HTTP client (for OpenAI API, Claude API, Ollama) - use rustls to avoid libssl-dev
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "blocking"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "blocking", "stream"] }
 
 # Global hotkey
 rdev = "0.5"
@@ -76,6 +79,15 @@ async-channel = { version = "2", optional = true }
 ashpd = { version = "0.13", default-features = false, features = ["tokio", "global_shortcuts", "remote_desktop", "screencast", "clipboard"] }
 futures-util = "0.3"
 
+# Sign in with ChatGPT (OAuth/OIDC, SSE, GNOME Secret Service)
+base64 = { version = "0.22", optional = true }
+getrandom = { version = "0.4", optional = true }
+subtle = { version = "2", optional = true }
+sha2 = { version = "0.11", optional = true }
+jsonwebtoken = { version = "12", optional = true, default-features = false, features = ["aws_lc_rs"] }
+eventsource-stream = "0.2"
+secret-service = { version = "5", features = ["rt-tokio-crypto-rust"] }
+
 # .deb packaging (cargo deb). Built and attached to releases by .github/workflows/release.yml.
 [package.metadata.deb]
 maintainer = "Shuhei <23713413+shuhei0866@users.noreply.github.com>"
@@ -85,7 +97,7 @@ section = "utils"
 priority = "optional"
 extended-description = """\
 Koe is an AI voice input for Japanese speakers on Ubuntu. Press a hotkey, \
-speak, and the text is transcribed by Whisper, formatted by Claude or Ollama, \
+speak, and the text is transcribed by Whisper, formatted by Claude, Ollama, or ChatGPT, \
 and typed into the active window. Works on GNOME Wayland through the \
 standard desktop portals."""
 depends = "$auto"

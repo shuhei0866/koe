@@ -126,6 +126,40 @@ impl DbusEmitter {
         focused
     }
 
+    /// Desktop status feedback without blocking the next recording.
+    pub fn notify_chatgpt_fallback(&self, problem: crate::ai::chatgpt::Problem) {
+        let connection = self.connection.clone();
+        tokio::spawn(async move {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                let proxy = zbus::Proxy::new(
+                    &connection,
+                    "org.freedesktop.Notifications",
+                    "/org/freedesktop/Notifications",
+                    "org.freedesktop.Notifications",
+                )
+                .await?;
+                let body = format!("{problem}. Used dictionary-corrected text. See Settings → AI.");
+                let _: u32 = proxy
+                    .call(
+                        "Notify",
+                        &(
+                            "Koe",
+                            0u32,
+                            "audio-input-microphone",
+                            "Koe — ChatGPT",
+                            body,
+                            Vec::<String>::new(),
+                            std::collections::HashMap::<String, zbus::zvariant::Value>::new(),
+                            -1i32,
+                        ),
+                    )
+                    .await?;
+                Ok::<(), zbus::Error>(())
+            })
+            .await;
+        });
+    }
+
     /// Emit an `AudioLevel` signal with the given RMS level.
     pub async fn emit_audio_level(&self, level: f64) {
         let object_server = self.connection.object_server();

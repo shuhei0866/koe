@@ -1,3 +1,4 @@
+mod chatgpt_settings;
 pub mod history_page;
 pub mod indicator;
 pub mod settings_window;

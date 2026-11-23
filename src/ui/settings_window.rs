@@ -64,7 +64,8 @@ impl Widgets {
         };
         let ai_engine = match self.ai_engine.selected() {
             0 => AiEngine::Claude,
-            _ => AiEngine::Ollama,
+            1 => AiEngine::Ollama,
+            _ => AiEngine::Chatgpt,
         };
 
         Config {
@@ -140,6 +141,7 @@ pub fn build(app: &libadwaita::Application) {
         ollama_model_combo,
         ollama_model_custom,
     ) = build_ai_page(&config, &window);
+    super::chatgpt_settings::install(&ai_page, &ai_engine, &rec_engine, &window);
 
     let (history_page, _history_widgets) = super::history_page::build_history_page(&config);
 
@@ -216,6 +218,12 @@ fn preserve_unexposed_config(mut config: Config, existing: Config) -> Config {
     if let Some(claude) = config.ai.claude.as_mut() {
         claude.base_url = existing.ai.claude.and_then(|old| old.base_url);
     }
+    // Switching an engine keeps the user's local dictionary and pipeline settings.
+    config.input = existing.input;
+    config.dictionaries = existing.dictionaries;
+    config.memory = existing.memory;
+    config.feedback = existing.feedback;
+    config.history = existing.history;
     config.ai.context_enabled = existing.ai.context_enabled;
     config.limits = existing.limits;
     // The model is not exposed in the UI; keep the configured one.
@@ -487,11 +495,12 @@ fn build_ai_page(
         .build();
 
     let engine_row = libadwaita::ComboRow::builder().title("Engine").build();
-    let engine_list = gtk4::StringList::new(&["Claude", "Ollama"]);
+    let engine_list = gtk4::StringList::new(&["Claude", "Ollama", "ChatGPT"]);
     engine_row.set_model(Some(&engine_list));
     let current_engine = match config.ai.engine {
         AiEngine::Claude => 0,
         AiEngine::Ollama => 1,
+        AiEngine::Chatgpt => 2,
     };
     engine_row.set_selected(current_engine);
     engine_group.add(&engine_row);
@@ -990,6 +999,21 @@ fn remove_autostart_entry() -> anyhow::Result<()> {
 #[cfg(test)]
 mod base_url_save_tests {
     use super::*;
+
+    #[test]
+    fn selecting_chatgpt_keeps_local_pipeline_settings() {
+        let mut edited = default_config();
+        edited.ai.engine = AiEngine::Chatgpt;
+        let mut existing = default_config();
+        existing.dictionaries.paths.push("custom-terms.toml".into());
+        existing.history.enabled = false;
+        existing.feedback.sound_enabled = false;
+        let merged = preserve_unexposed_config(edited, existing);
+        assert_eq!(merged.ai.engine, AiEngine::Chatgpt);
+        assert_eq!(merged.dictionaries.paths, ["custom-terms.toml"]);
+        assert!(!merged.history.enabled);
+        assert!(!merged.feedback.sound_enabled);
+    }
 
     #[test]
     fn saving_preserves_latest_file_base_url_and_widget_edits() {

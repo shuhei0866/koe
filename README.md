@@ -16,7 +16,7 @@ Mac や Windows には、話した内容を AI が読みやすい文章に整え
 
 - **Ubuntu 26.04（GNOME Wayland）で動く** — 標準のデスクトップポータルを使い、ショートカットも文字入力も Wayland でそのまま動きます
 - **日本語が前提** — 標準の認識言語は日本語。日本語や複数行のテキストも、入力欄に崩れずに入ります
-- **AI が文章に整える** — 認識の誤りを直し、句読点を補い、技術用語を正しい表記に直します（Claude / Ollama）
+- **AI が文章に整える** — 認識の誤りを直し、句読点を補い、技術用語を正しい表記に直します（Claude / Ollama / ChatGPT）
 - **使うほど賢くなる** — 直した用語や文脈を AI が覚え、次の認識と整形に活かします
 - **全部ローカルでも動く** — whisper.cpp + Ollama なら、音声も文字もマシンの外に出ません
 
@@ -25,8 +25,9 @@ Mac や Windows には、話した内容を AI が読みやすい文章に整え
 Ubuntu 26.04 / GNOME（Wayland）/ x86_64 に初めて入れる場合の手順です。
 
 1. **Koe を入れる。** [最新リリース](https://github.com/shuhei0866/koe/releases/latest)から `koe_…_amd64.deb` をダウンロードし、[.deb の手順](#deb-パッケージおすすめ)でインストールします。
-2. **音声認識と文章の整形を準備する。** [Whisper のモデルをダウンロード](#モデルのダウンロード)します。文章の整形は次のどちらかを選びます。
+2. **音声認識と文章の整形を準備する。** [Whisper のモデルをダウンロード](#モデルのダウンロード)します。文章の整形方法を選びます。
    - **Claude API** を使う場合は、[API キーの手順](#api-キー)で Anthropic のキーを設定します。音声認識はローカルで行い、認識した文章を Claude に送って整えます。
+   - **ChatGPT** を使う場合は、`koe settings` の `Recognition` で `Whisper Local`、`AI` で `ChatGPT` を選びます。`Continue with ChatGPT` からブラウザで利用枠の使用を許可し、利用可能なモデルを選んで設定を閉じます。
    - **Ollama** を使う場合は、[Ollama をインストールして起動](https://docs.ollama.com/linux)し、使うモデルをダウンロードします（例: `ollama pull qwen2.5:3b`）。`koe settings` を開き、`AI Post-Processing Engine` を `Ollama` にして、そのモデルを選んで閉じます。音声認識も整形もローカルで行います。
 3. **Koe を起動する。** デスクトップのロックを解除した状態で、端末から `koe` を実行します。表示されるダイアログでキーボードとクリップボードへのアクセスを許可し、音声入力のショートカットを登録します。
 4. **テキストエディターに話してみる。** 空の文書にカーソルを置き、登録したキー（既定は右 Super）を押しながら「ラストで音声入力を試しています」と話して、キーを離します。文書に文章が入れば成功です。テキストエディターで試すときは GNOME Shell 拡張の有効化は不要です。
@@ -51,7 +52,7 @@ Ubuntu 26.04 / GNOME（Wayland）/ x86_64 に初めて入れる場合の手順�
 | 機能 | 内容 |
 |---|---|
 | 音声認識 | whisper.cpp（ローカル、Vulkan で GPU 利用）か OpenAI の文字起こし API（`gpt-transcribe`） |
-| AI による整形 | Claude API か Ollama（ローカル LLM）。認識の誤りの修正、句読点、辞書に沿った表記 |
+| AI による整形 | Claude API、Ollama（ローカル LLM）、ChatGPT 利用枠。認識の誤りの修正、句読点、辞書に沿った表記 |
 | 学習メモリ | AI が用語や文脈を覚え、Whisper へのヒントと整形の両方に使う（Claude 使用時） |
 | 用語辞書 | TOML で「誤認識 → 正しい表記」を宣言しておける |
 | 無音の除去（VAD） | Silero VAD で無音を落とし、何も話していないのに「ご視聴ありがとうございました」と入力される現象を防ぐ |
@@ -213,7 +214,7 @@ language = "ja"
 model = "gpt-transcribe"  # whisper-1 は 2027-02-26 に使えなくなります
 
 [ai]
-engine = "claude"  # "claude" | "ollama"
+engine = "claude"  # "claude" | "ollama" | "chatgpt"
 
 [ai.claude]
 api_key_env = "ANTHROPIC_API_KEY"
@@ -295,10 +296,13 @@ AI の整形に Claude を使っていると、Koe は覚えておく価値の�
 
 | 構成 | 外部に送るもの | 手元に残るもの |
 |---|---|---|
+| **whisper.cpp + ChatGPT** | 辞書適用済みテキストと固定の整形指示（OpenAI へ） | 音声、ウィンドウ情報、辞書ファイル、学習メモ |
 | **whisper.cpp + Ollama**（完全ローカル） | なし | 音声、認識結果、ウィンドウ情報、すべての処理 |
 | **OpenAI API + Ollama** | 音声（OpenAI へ、文字起こしのため） | ウィンドウ情報、整形 |
 | **whisper.cpp + Claude API** | 認識結果とアクティブウィンドウのタイトル・アプリ名（Anthropic へ） | 音声 |
 | **OpenAI API + Claude API** | 音声（OpenAI へ）、認識結果とウィンドウ情報（Anthropic へ） | — |
+
+ChatGPT の接続はアカウント・ワークスペースごとに GNOME Keyring に保存されます。切断は `AI` の `Disconnect` から行えます。利用枠に達したときは、使用量を確認してから `Resume formatting` で再開できます。整形を完了できない場合、Koe は辞書適用済みの文字起こしを貼り付けます。 [ChatGPT の使用量設定](https://chatgpt.com/settings/usage)
 
 **ウィンドウ情報について:** Claude API を使う場合、認識結果と一緒にアクティブウィンドウのタイトルとアプリ名を送ります（X11 のみ）。ウィンドウタイトルにはファイルパスや URL、メールの件名などが含まれることがあります。送りたくない場合は `koe --no-context` で起動するか、完全ローカル構成を使ってください。
 
@@ -338,9 +342,9 @@ GNOME が Koe 用に保存しているショートカットは `dconf dump /org/
 ```
 [ホットキー] → [録音 (cpal)] → [VAD (Silero)] → [音声認識] → [辞書の置き換え] → [AI による整形] → [入力]
                                                     ↑                                  ↑
-                                          whisper.cpp / OpenAI                Claude / Ollama
+                                          whisper.cpp / OpenAI                Claude / Ollama / ChatGPT
                                                                                        ↑
-                                                                         [学習メモリ・ウィンドウ情報]
+                                                                         [学習メモリ・ウィンドウ情報（対応エンジンのみ）]
 ```
 
 処理の流れと状態遷移の図、モジュール構成は [英語版 README](README.en.md#processing-flow) にあります。

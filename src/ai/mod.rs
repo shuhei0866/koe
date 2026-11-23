@@ -1,3 +1,4 @@
+pub mod chatgpt;
 pub mod claude;
 pub mod ollama;
 
@@ -126,6 +127,7 @@ pub fn create_processor(
     max_response_bytes: usize,
 ) -> Result<Box<dyn TextProcessor>> {
     match config.engine {
+        AiEngine::Chatgpt => Ok(Box::new(chatgpt::ChatGptProcessor::new(max_response_bytes))),
         AiEngine::Claude => {
             let claude_config = config
                 .claude
