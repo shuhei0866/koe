@@ -15,7 +15,7 @@ language = "ja"
 model = "gpt-transcribe"  # whisper-1 は 2027-02-26 に使えなくなる
 
 [ai]
-engine = "claude"  # "claude" | "ollama"
+engine = "claude"  # "claude" | "ollama" | "chatgpt"
 context_enabled = true  # false にするとウィンドウタイトル・アプリ名を AI に送信しない
 
 [ai.claude]
