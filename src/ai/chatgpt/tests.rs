@@ -30,7 +30,7 @@ const USAGE_ERROR: &str =
 
 struct Reply {
     status: u16,
-    content_type: &'static str,
+    content_type: Option<&'static str>,
     body: String,
     extra_bytes: usize,
     delay: Duration,
@@ -40,7 +40,7 @@ impl Reply {
     fn event(body: impl Into<String>) -> Self {
         Self {
             status: 200,
-            content_type: "text/event-stream",
+            content_type: Some("text/event-stream"),
             body: body.into(),
             extra_bytes: 0,
             delay: Duration::ZERO,
@@ -50,7 +50,7 @@ impl Reply {
     fn json(status: u16, body: Value) -> Self {
         Self {
             status,
-            content_type: "application/json",
+            content_type: Some("application/json"),
             ..Self::event(body.to_string())
         }
     }
@@ -112,9 +112,13 @@ impl Server {
                     body,
                 });
                 let mut stream = stream.into_inner();
+                let content_type = reply
+                    .content_type
+                    .map(|value| format!("Content-Type: {value}\r\n"))
+                    .unwrap_or_default();
                 let response = format!(
-                    "HTTP/1.1 {} Fixture\r\nConnection: close\r\nContent-Type: {}\r\nContent-Length: {}\r\n\r\n",
-                    reply.status, reply.content_type, reply.body.len() + reply.extra_bytes,
+                    "HTTP/1.1 {} Fixture\r\nConnection: close\r\n{content_type}Content-Length: {}\r\n\r\n",
+                    reply.status, reply.body.len() + reply.extra_bytes,
                 );
                 if stream.write_all(response.as_bytes()).await.is_ok() {
                     // Split Japanese across byte boundaries to exercise SSE framing.
@@ -228,6 +232,35 @@ async fn streaming_uses_completed_message_and_ignores_keepalives() {
     assert_eq!(format(&api, 4096).await, Err(Problem::Interrupted));
     assert_eq!(format(&api, 4096).await.unwrap(), "途中までの結果");
     assert_eq!(requests.await.unwrap().len(), 5);
+}
+
+#[tokio::test]
+async fn streaming_without_content_type_still_requires_a_terminal_event() {
+    let server = Server::start().await;
+    let api = server.api();
+    let requests = server.serve(vec![
+        Reply {
+            content_type: None,
+            ..Reply::event(OK_EVENTS)
+        },
+        Reply {
+            content_type: None,
+            ..Reply::event(DELTA_ONLY)
+        },
+        Reply {
+            content_type: None,
+            ..Reply::json(200, json!({"status":"completed","output":FORMATTED}))
+        },
+        Reply {
+            content_type: None,
+            ..Reply::json(204, Value::Null)
+        },
+    ]);
+    assert_eq!(format(&api, 4096).await.unwrap(), FORMATTED);
+    for _ in 0..3 {
+        assert_eq!(format(&api, 4096).await, Err(Problem::Interrupted));
+    }
+    assert_eq!(requests.await.unwrap().len(), 4);
 }
 
 #[tokio::test]
@@ -467,7 +500,10 @@ async fn isolated_keyring_and_transcript_pipeline() {
                 "token_type": "Bearer", "expires_in": 3600
             }),
         ),
-        Reply::event(OK_EVENTS),
+        Reply {
+            content_type: None,
+            ..Reply::event(OK_EVENTS)
+        },
         Reply::event(OK_EVENTS.replace("Koe", "コエ")),
         Reply {
             extra_bytes: 80,

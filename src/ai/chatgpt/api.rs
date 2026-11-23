@@ -236,13 +236,15 @@ impl Api {
                     })
             });
         if !media_type.is_some_and(|kind| kind.eq_ignore_ascii_case("text/event-stream")) {
+            // This route can omit Content-Type. Keep reading within the normal
+            // limits and require the same structured terminal event.
             tracing::warn!(
                 ?request_id,
+                status = %response.status(),
                 headers_ms,
                 ?media_type,
-                "ChatGPT response is not an event stream"
+                "Reading ChatGPT stream without the expected media type"
             );
-            return Err(Problem::Interrupted);
         }
 
         let mut received = 0usize;
