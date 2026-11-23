@@ -157,8 +157,9 @@ async fn utterance(processor: &ChatGptProcessor) -> crate::daemon::FinalTranscri
 }
 
 async fn format(api: &Api, max_bytes: usize) -> Result<String, Problem> {
+    let started = std::time::Instant::now();
     let response = api.start_format("token", "model", CORRECTED).await?;
-    Api::finish_format(response, max_bytes).await
+    Api::finish_format(response, max_bytes, started).await
 }
 
 #[tokio::test]
@@ -184,6 +185,49 @@ async fn model_catalog_uses_server_order_and_list_visibility() {
     assert!(request
         .headers
         .contains("authorization: Bearer synthetic-access"));
+}
+
+#[tokio::test]
+async fn streaming_uses_completed_message_and_ignores_keepalives() {
+    let server = Server::start().await;
+    let api = server.api();
+    let encode = |response: Value| {
+        format!(
+            "data: {}\r\n\r\n",
+            json!({"type": "response.completed", "response": response})
+        )
+    };
+    let message = json!({
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": FORMATTED}]
+    });
+    let completed = json!({"status": "completed", "output": [message.clone()]});
+    let requests = server.serve(vec![
+        Reply::event(
+            ": keepalive\r\n\r\nevent: heartbeat\r\n\r\nevent: ping\r\ndata: keep-alive\r\n\r\n"
+                .to_owned()
+                + &encode(completed),
+        ),
+        Reply::event(
+            DELTA_ONLY.to_owned() + &encode(json!({"status": "incomplete", "output": [message]})),
+        ),
+        Reply::event(
+            DELTA_ONLY.to_owned()
+                + &encode(json!({"status": "completed", "output": [{
+                    "type": "message", "role": "assistant",
+                    "content": [{"type": "refusal", "refusal": "fixture"}]
+                }]})),
+        ),
+        Reply::event("event: ping\ndata: keep-alive\n\n".to_owned() + DELTA_ONLY),
+        Reply::event(DELTA_ONLY.to_owned() + &encode(json!({"status": "completed", "output": []}))),
+    ]);
+    assert_eq!(format(&api, 4096).await.unwrap(), FORMATTED);
+    assert_eq!(format(&api, 4096).await, Err(Problem::Failed));
+    assert_eq!(format(&api, 4096).await, Err(Problem::Failed));
+    assert_eq!(format(&api, 4096).await, Err(Problem::Interrupted));
+    assert_eq!(format(&api, 4096).await.unwrap(), "途中までの結果");
+    assert_eq!(requests.await.unwrap().len(), 5);
 }
 
 #[tokio::test]

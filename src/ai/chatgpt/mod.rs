@@ -267,7 +267,7 @@ impl ChatGpt {
                     (model.slug, true)
                 }
             };
-            let response = {
+            let (response, started) = {
                 // Start the request under the session lock so a completed
                 // disconnect cannot be followed by a request with old credentials.
                 let mut tx = self.transaction().await?;
@@ -278,9 +278,14 @@ impl ChatGpt {
                     account.model = Some(model.clone());
                     self.save(&tx).await?;
                 }
-                api.start_format(&access.token, &model, input).await?
+                tracing::info!(%model, "Requesting ChatGPT formatting");
+                let started = std::time::Instant::now();
+                (
+                    api.start_format(&access.token, &model, input).await?,
+                    started,
+                )
             };
-            let formatted = Api::finish_format(response, max_bytes).await?;
+            let formatted = Api::finish_format(response, max_bytes, started).await?;
             let mut tx = self.transaction().await?;
             Self::check_access(&access, &mut tx.state)?;
             Ok(formatted)

@@ -786,7 +786,15 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                             };
 
                             // Speech recognition
-                            match recognizer.transcribe(&audio_data).await {
+                            let transcription_started = std::time::Instant::now();
+                            let transcription = recognizer.transcribe(&audio_data).await;
+                            if use_chatgpt {
+                                tracing::info!(
+                                    elapsed_ms = transcription_started.elapsed().as_millis(),
+                                    "Speech recognition finished"
+                                );
+                            }
+                            match transcription {
                                 Ok(raw_text) => {
                                     if raw_text.is_empty() {
                                         tracing::warn!("Empty transcription");

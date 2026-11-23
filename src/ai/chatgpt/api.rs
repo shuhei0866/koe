@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use eventsource_stream::{EventStreamError, Eventsource};
 use futures_util::{pin_mut, StreamExt};
@@ -215,18 +215,36 @@ impl Api {
             .map_err(transport)
     }
 
-    pub async fn finish_format(response: Response, max_bytes: usize) -> Outcome<String> {
+    pub async fn finish_format(
+        response: Response,
+        max_bytes: usize,
+        started: Instant,
+    ) -> Outcome<String> {
         let response = check_api_status(response).await?;
         let request_id = request_id(&response);
-        let event_stream = response
+        let headers_ms = started.elapsed().as_millis();
+        let media_type = response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|header| header.to_str().ok())
             .and_then(|header| header.split(';').next())
-            .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("text/event-stream"));
-        if !event_stream {
+            .map(str::trim)
+            .filter(|kind| {
+                kind.len() <= 80
+                    && kind.bytes().all(|b| {
+                        b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'+' | b'.')
+                    })
+            });
+        if !media_type.is_some_and(|kind| kind.eq_ignore_ascii_case("text/event-stream")) {
+            tracing::warn!(
+                ?request_id,
+                headers_ms,
+                ?media_type,
+                "ChatGPT response is not an event stream"
+            );
             return Err(Problem::Interrupted);
         }
+
         let mut received = 0usize;
         let bytes = response.bytes_stream().map(move |chunk| {
             let chunk = chunk.map_err(|error| {
@@ -246,22 +264,67 @@ impl Api {
         pin_mut!(events);
 
         let mut output = String::new();
+        let mut event_count = 0u32;
+        let mut first_text_ms = None;
         while let Some(event) = events.next().await {
-            let event = event.map_err(|error| match error {
-                EventStreamError::Transport(problem) => problem,
-                _ => Problem::Interrupted,
-            })?;
-            if event.data.is_empty() || event.data == "[DONE]" {
+            let event = match event {
+                Ok(event) => event,
+                Err(error) => {
+                    let (stage, problem) = match error {
+                        EventStreamError::Transport(problem) => ("body", problem),
+                        EventStreamError::Utf8(_) => ("utf8", Problem::Interrupted),
+                        EventStreamError::Parser(_) => ("framing", Problem::Interrupted),
+                    };
+                    tracing::warn!(
+                        ?request_id,
+                        stage,
+                        ?problem,
+                        headers_ms,
+                        event_count,
+                        elapsed_ms = started.elapsed().as_millis(),
+                        "ChatGPT stream interrupted"
+                    );
+                    return Err(problem);
+                }
+            };
+            event_count = event_count.saturating_add(1);
+            let payload = event.data.trim();
+            if payload.is_empty()
+                || payload == "[DONE]"
+                || matches!(event.event.as_str(), "ping" | "keepalive" | "keep-alive")
+            {
                 continue;
             }
-            let data: Value =
-                serde_json::from_str(&event.data).map_err(|_| Problem::Interrupted)?;
+            let data: Value = serde_json::from_str(payload).map_err(|_| {
+                tracing::warn!(?request_id, event_count, "Invalid JSON in ChatGPT stream");
+                Problem::Interrupted
+            })?;
             match data["type"].as_str() {
                 Some("response.output_text.delta") => {
-                    output.push_str(data["delta"].as_str().ok_or(Problem::Interrupted)?);
+                    let delta = data["delta"].as_str().ok_or_else(|| {
+                        tracing::warn!(
+                            ?request_id,
+                            event_count,
+                            "Missing text delta in ChatGPT stream"
+                        );
+                        Problem::Interrupted
+                    })?;
+                    if !delta.is_empty() {
+                        first_text_ms.get_or_insert_with(|| started.elapsed().as_millis());
+                        output.push_str(delta);
+                    }
                 }
-                Some("response.completed") if !output.trim().is_empty() => {
-                    return Ok(output.trim().to_owned());
+                Some("response.completed") => {
+                    let final_text = completed_text(&data["response"], &output)?;
+                    tracing::info!(
+                        ?request_id,
+                        headers_ms,
+                        ?first_text_ms,
+                        event_count,
+                        elapsed_ms = started.elapsed().as_millis(),
+                        "ChatGPT formatting completed"
+                    );
+                    return Ok(final_text);
                 }
                 Some("response.failed" | "error") => {
                     let error = if data["type"] == "response.failed" {
@@ -274,14 +337,58 @@ impl Api {
                     tracing::warn!(?request_id, ?code, ?problem, "ChatGPT stream failed");
                     return Err(problem);
                 }
-                Some("response.incomplete" | "response.completed" | "response.refusal.delta") => {
+                Some("response.incomplete" | "response.refusal.delta") => {
                     return Err(Problem::Failed);
                 }
                 _ => {}
             }
         }
+        tracing::warn!(
+            ?request_id,
+            headers_ms,
+            event_count,
+            ?first_text_ms,
+            elapsed_ms = started.elapsed().as_millis(),
+            "ChatGPT stream ended before response.completed"
+        );
         Err(Problem::Interrupted)
     }
+}
+
+fn completed_text(response: &Value, deltas: &str) -> Outcome<String> {
+    if response
+        .get("status")
+        .is_some_and(|status| status != "completed")
+    {
+        return Err(Problem::Failed);
+    }
+
+    let mut final_output = String::new();
+    if let Some(items) = response.get("output") {
+        for item in items.as_array().ok_or(Problem::Failed)? {
+            if item["type"] != "message" || item["role"] != "assistant" {
+                continue;
+            }
+            for part in item["content"].as_array().ok_or(Problem::Failed)? {
+                match part["type"].as_str() {
+                    Some("output_text") => {
+                        final_output.push_str(part["text"].as_str().ok_or(Problem::Failed)?)
+                    }
+                    Some("refusal") => return Err(Problem::Failed),
+                    _ => {}
+                }
+            }
+        }
+    }
+    let text = if final_output.trim().is_empty() {
+        deltas.trim()
+    } else {
+        final_output.trim()
+    };
+    if text.is_empty() {
+        return Err(Problem::Failed);
+    }
+    Ok(text.to_owned())
 }
 
 pub(super) async fn read_json<T: DeserializeOwned>(response: Response) -> Outcome<T> {
