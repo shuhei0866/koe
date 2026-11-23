@@ -270,7 +270,9 @@ impl Api {
             if let (Ok(bytes), Some(initial)) = (&chunk, prefix.as_mut()) {
                 initial.extend_from_slice(bytes);
                 let skip = initial
-                    .chunks_exact(BOM.len())
+                    .as_chunks::<{ BOM.len() }>()
+                    .0
+                    .iter()
                     .take_while(|bytes| *bytes == BOM)
                     .count()
                     * BOM.len();
