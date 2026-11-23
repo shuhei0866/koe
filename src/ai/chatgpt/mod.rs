@@ -45,6 +45,8 @@ pub enum Problem {
     ModelUnavailable,
     #[error("ChatGPT formatting requires local Whisper")]
     LocalWhisperRequired,
+    #[error("ChatGPT formatting was skipped because its settings changed or could not be read")]
+    SettingsChanged,
     #[error("The GNOME login keyring is locked or unavailable")]
     Keyring,
     #[error("Another ChatGPT account operation is running")]
@@ -161,7 +163,11 @@ impl ChatGpt {
             match outcome {
                 Ok(tokens) => {
                     account.tokens = Some(tokens);
-                    self.save(&tx).await?;
+                    if self.save(&tx).await.is_err() {
+                        // Retry persisting the rotated pair while the lock is
+                        // held. A second refresh may reuse an invalid token.
+                        self.save(&tx).await?;
+                    }
                 }
                 Err(Problem::SignInRequired) => {
                     account.tokens = None;
@@ -235,6 +241,14 @@ impl ChatGpt {
         let result: Outcome<()> = async {
             let mut tx = self.transaction().await?;
             let account = Self::check_access(access, &mut tx.state)?;
+            if problem == Problem::SignInRequired
+                && account
+                    .tokens
+                    .as_ref()
+                    .is_none_or(|tokens| tokens.access != access.token)
+            {
+                return Ok(());
+            }
             if !matches!(
                 account.block,
                 Some(Block::UsageLimit | Block::SignInRequired | Block::Restricted)

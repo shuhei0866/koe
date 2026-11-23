@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use eventsource_stream::{EventStreamError, Eventsource};
-use futures_util::{pin_mut, StreamExt};
+use futures_util::{future, pin_mut, StreamExt};
 use reqwest::{Client, Response, StatusCode};
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
@@ -262,6 +262,26 @@ impl Api {
             }
             Ok(chunk)
         });
+        // eventsource-stream 0.2.3 slices a leading UTF-8 BOM at byte 1.
+        // Strip leading BOMs first, including when the bytes arrive separately.
+        const BOM: &[u8] = b"\xef\xbb\xbf";
+        let mut prefix = Some(Vec::new());
+        let bytes = bytes.filter_map(move |chunk| {
+            if let (Ok(bytes), Some(initial)) = (&chunk, prefix.as_mut()) {
+                initial.extend_from_slice(bytes);
+                let skip = initial
+                    .chunks_exact(BOM.len())
+                    .take_while(|bytes| *bytes == BOM)
+                    .count()
+                    * BOM.len();
+                initial.drain(..skip);
+                if BOM.starts_with(initial) {
+                    return future::ready(None);
+                }
+                return future::ready(prefix.take().map(|initial| Ok(initial.into())));
+            }
+            future::ready(Some(chunk))
+        });
         let events = bytes.eventsource();
         pin_mut!(events);
 
@@ -358,10 +378,7 @@ impl Api {
 }
 
 fn completed_text(response: &Value, deltas: &str) -> Outcome<String> {
-    if response
-        .get("status")
-        .is_some_and(|status| status != "completed")
-    {
+    if response["status"] != "completed" {
         return Err(Problem::Failed);
     }
 

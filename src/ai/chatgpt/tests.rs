@@ -34,6 +34,7 @@ struct Reply {
     body: String,
     extra_bytes: usize,
     delay: Duration,
+    split_at: Option<usize>,
 }
 
 impl Reply {
@@ -44,6 +45,7 @@ impl Reply {
             body: body.into(),
             extra_bytes: 0,
             delay: Duration::ZERO,
+            split_at: None,
         }
     }
 
@@ -93,7 +95,11 @@ impl Server {
                 let mut headers = String::new();
                 let length = loop {
                     let mut header = String::new();
-                    stream.read_line(&mut header).await.unwrap();
+                    assert_ne!(
+                        stream.read_line(&mut header).await.unwrap(),
+                        0,
+                        "EOF in fixture headers"
+                    );
                     if header == "\r\n" {
                         let length = headers.lines().find_map(|h| {
                             h.to_ascii_lowercase()
@@ -122,7 +128,9 @@ impl Server {
                 );
                 if stream.write_all(response.as_bytes()).await.is_ok() {
                     // Split Japanese across byte boundaries to exercise SSE framing.
-                    let offset = reply.body.find('で').map_or(0, |i| i + 1);
+                    let offset = reply
+                        .split_at
+                        .unwrap_or_else(|| reply.body.find('で').map_or(0, |i| i + 1));
                     let (head, tail) = reply.body.as_bytes().split_at(offset);
                     let _ = stream.write_all(head).await;
                     tokio::time::sleep(reply.delay).await;
@@ -155,7 +163,7 @@ async fn utterance(processor: &ChatGptProcessor) -> crate::daemon::FinalTranscri
         },
         &dictionary(),
         "送ってはいけない学習メモ",
-        true,
+        Ok(()),
     )
     .await
 }
@@ -261,6 +269,25 @@ async fn streaming_without_content_type_still_requires_a_terminal_event() {
         assert_eq!(format(&api, 4096).await, Err(Problem::Interrupted));
     }
     assert_eq!(requests.await.unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn streaming_with_a_split_bom_still_requires_a_real_response() {
+    let server = Server::start().await;
+    let api = server.api();
+    let requests = server.serve(vec![
+        Reply {
+            delay: Duration::from_millis(20),
+            split_at: Some(1),
+            ..Reply::event("\u{feff}".to_owned() + OK_EVENTS)
+        },
+        Reply::event("\u{feff}\u{feff}".to_owned() + OK_EVENTS),
+        Reply::event(DELTA_ONLY.to_owned() + "data: {\"type\":\"response.completed\"}\n\n"),
+    ]);
+    assert_eq!(format(&api, 4096).await.unwrap(), FORMATTED);
+    assert_eq!(format(&api, 4096).await.unwrap(), FORMATTED);
+    assert_eq!(format(&api, 4096).await, Err(Problem::Failed));
+    assert_eq!(requests.await.unwrap().len(), 3);
 }
 
 #[tokio::test]
@@ -583,7 +610,7 @@ async fn isolated_keyring_and_transcript_pipeline() {
             &WindowContext::default(),
             &dictionary,
             "",
-            true,
+            Ok(()),
         )
         .await;
         assert_eq!(fallback(&out), Some(Problem::NotConnected));

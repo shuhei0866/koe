@@ -315,21 +315,42 @@ pub(crate) struct FinalTranscript {
     pub fallback: Option<anyhow::Error>,
 }
 
+fn chatgpt_processing_permission(
+    saved: anyhow::Result<config::Config>,
+    active_recognizer: &config::RecognitionEngine,
+) -> Result<(), ai::chatgpt::Problem> {
+    use ai::chatgpt::Problem;
+    let saved = saved.map_err(|_| Problem::SettingsChanged)?;
+    if saved.ai.engine != config::AiEngine::Chatgpt {
+        return Err(Problem::SettingsChanged);
+    }
+    if matches!(
+        saved.recognition.engine,
+        config::RecognitionEngine::WhisperLocal
+    ) && matches!(active_recognizer, config::RecognitionEngine::WhisperLocal)
+    {
+        Ok(())
+    } else {
+        Err(Problem::LocalWhisperRequired)
+    }
+}
+
 pub(crate) async fn format_transcript(
     raw: &str,
     processor: &dyn ai::TextProcessor,
     window: &context::WindowContext,
     dictionary: &dictionary::Dictionary,
     memory: &str,
-    allow_processing: bool,
+    permission: Result<(), ai::chatgpt::Problem>,
 ) -> FinalTranscript {
     let corrected = dictionary.apply_terms(raw);
-    let result = if allow_processing {
-        processor
-            .process(&corrected, window, dictionary, memory)
-            .await
-    } else {
-        Err(ai::chatgpt::Problem::LocalWhisperRequired.into())
+    let result = match permission {
+        Ok(()) => {
+            processor
+                .process(&corrected, window, dictionary, memory)
+                .await
+        }
+        Err(problem) => Err(problem.into()),
     };
     match result {
         Ok(result) => FinalTranscript {
@@ -520,6 +541,7 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
     let mut state = AppState::Idle;
     let mut last_consolidation_entry_count: usize = 0;
     let mut last_chatgpt_problem = None;
+    let mut reload_pending = false;
 
     // Main event loop
     loop {
@@ -530,119 +552,117 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
             break;
         }
 
-        // Check for IPC messages (non-blocking)
-        match ipc_rx.try_recv() {
-            Ok(ipc::IpcRequest::GetStatus) => {
-                tracing::info!("IPC: GetStatus request (state={})", state);
-            }
-            Ok(ipc::IpcRequest::ReloadConfig) => {
-                tracing::info!("IPC: ReloadConfig request received");
-                if state != AppState::Idle {
-                    tracing::warn!("Skipping config reload: state is {} (must be Idle)", state);
-                } else {
-                    match config::Config::load() {
-                        Ok(mut new_config) => {
-                            // Preserve CLI --no-context override
-                            if cli_no_context {
-                                new_config.ai.context_enabled = false;
-                            }
-
-                            // Reload dictionary
-                            let dict_paths = new_config.dictionary_paths();
-                            match dictionary::Dictionary::load(
-                                &dict_paths,
-                                new_config.limits.max_file_size_bytes as u64,
-                            ) {
-                                Ok(new_dict) => {
-                                    dictionary = new_dict;
-                                    tracing::info!("Dictionary reloaded");
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to reload dictionary: {}", e);
-                                }
-                            }
-
-                            // Reload recognizer
-                            match recognition::create_recognizer(&new_config.recognition) {
-                                Ok(new_recognizer) => {
-                                    recognizer = new_recognizer;
-                                    recognition_engine = new_config.recognition.engine.clone();
-                                    tracing::info!(
-                                        "Recognizer reloaded: {:?}",
-                                        new_config.recognition.engine
-                                    );
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to reload recognizer: {}", e);
-                                }
-                            }
-
-                            // Reload VAD
-                            vad = load_vad(&new_config.vad);
-
-                            // Reload AI processor
-                            match ai::create_processor(
-                                &new_config.ai,
-                                new_config.limits.max_api_response_bytes,
-                            ) {
-                                Ok(new_processor) => {
-                                    processor = new_processor;
-                                    processing_engine = new_config.ai.engine.clone();
-                                    tracing::info!(
-                                        "AI processor reloaded: {:?}",
-                                        new_config.ai.engine
-                                    );
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to reload AI processor: {}", e);
-                                }
-                            }
-
-                            // Reload memory
-                            if new_config.memory.enabled {
-                                let new_memory_dir = new_config.memory_dir();
-                                match memory::Memory::load(
-                                    &new_memory_dir,
-                                    new_config.limits.max_file_size_bytes as u64,
-                                ) {
-                                    Ok(new_mem) => {
-                                        mem = new_mem;
-                                        tracing::info!("Memory reloaded");
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("Failed to reload memory: {}", e);
-                                    }
-                                }
-                            }
-
-                            // Re-apply Whisper hint after reload
-                            if new_config.memory.enabled && !mem.terms.is_empty() {
-                                let hint = mem.format_for_whisper_hint();
-                                recognizer.set_prompt_hint(&hint);
-                                tracing::info!("Whisper hint restored: {} terms", mem.terms.len());
-                            }
-
-                            config = new_config;
-                            tracing::info!("Config reloaded successfully");
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to load config: {}", e);
-                        }
-                    }
+        let hotkey_event = hotkey_rx.recv_timeout(Duration::from_millis(100));
+        while let Ok(request) = ipc_rx.try_recv() {
+            match request {
+                ipc::IpcRequest::GetStatus => {
+                    tracing::info!("IPC: GetStatus request (state={})", state);
+                }
+                ipc::IpcRequest::ReloadConfig => {
+                    reload_pending = true;
+                }
+                ipc::IpcRequest::Shutdown => {
+                    tracing::info!("IPC: Shutdown request received");
+                    let _ = shutdown_tx.send(true);
+                    break;
                 }
             }
-            Ok(ipc::IpcRequest::Shutdown) => {
-                tracing::info!("IPC: Shutdown request received");
-                let _ = shutdown_tx.send(true);
-                break;
-            }
-            Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => {
-                tracing::warn!("IPC channel disconnected");
+        }
+        if *shutdown_rx.borrow() {
+            break;
+        }
+
+        if reload_pending && state == AppState::Idle {
+            reload_pending = false;
+            match config::Config::load() {
+                Ok(mut new_config) => {
+                    // Preserve CLI --no-context override
+                    if cli_no_context {
+                        new_config.ai.context_enabled = false;
+                    }
+
+                    // Reload dictionary
+                    let dict_paths = new_config.dictionary_paths();
+                    match dictionary::Dictionary::load(
+                        &dict_paths,
+                        new_config.limits.max_file_size_bytes as u64,
+                    ) {
+                        Ok(new_dict) => {
+                            dictionary = new_dict;
+                            tracing::info!("Dictionary reloaded");
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to reload dictionary: {}", e);
+                        }
+                    }
+
+                    // Reload recognizer
+                    match recognition::create_recognizer(&new_config.recognition) {
+                        Ok(new_recognizer) => {
+                            recognizer = new_recognizer;
+                            recognition_engine = new_config.recognition.engine.clone();
+                            tracing::info!(
+                                "Recognizer reloaded: {:?}",
+                                new_config.recognition.engine
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to reload recognizer: {}", e);
+                        }
+                    }
+
+                    // Reload VAD
+                    vad = load_vad(&new_config.vad);
+
+                    // Reload AI processor
+                    match ai::create_processor(
+                        &new_config.ai,
+                        new_config.limits.max_api_response_bytes,
+                    ) {
+                        Ok(new_processor) => {
+                            processor = new_processor;
+                            processing_engine = new_config.ai.engine.clone();
+                            tracing::info!("AI processor reloaded: {:?}", new_config.ai.engine);
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to reload AI processor: {}", e);
+                        }
+                    }
+
+                    // Reload memory
+                    if new_config.memory.enabled {
+                        let new_memory_dir = new_config.memory_dir();
+                        match memory::Memory::load(
+                            &new_memory_dir,
+                            new_config.limits.max_file_size_bytes as u64,
+                        ) {
+                            Ok(new_mem) => {
+                                mem = new_mem;
+                                tracing::info!("Memory reloaded");
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to reload memory: {}", e);
+                            }
+                        }
+                    }
+
+                    // Re-apply Whisper hint after reload
+                    if new_config.memory.enabled && !mem.terms.is_empty() {
+                        let hint = mem.format_for_whisper_hint();
+                        recognizer.set_prompt_hint(&hint);
+                        tracing::info!("Whisper hint restored: {} terms", mem.terms.len());
+                    }
+
+                    config = new_config;
+                    tracing::info!("Config reloaded successfully");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to load config: {}", e);
+                }
             }
         }
 
-        match hotkey_rx.recv_timeout(Duration::from_millis(100)) {
+        match hotkey_event {
             Ok(hotkey::HotkeyEvent::RecordStart) => {
                 if state == AppState::Idle {
                     tracing::info!(">>> Recording started");
@@ -820,17 +840,23 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                                     } else {
                                         mem.format_for_prompt()
                                     };
+                                    // A saved opt-out must take effect even if a
+                                    // processor reload is pending or failed.
+                                    let permission = if use_chatgpt {
+                                        chatgpt_processing_permission(
+                                            config::Config::load(),
+                                            &recognition_engine,
+                                        )
+                                    } else {
+                                        Ok(())
+                                    };
                                     let result = format_transcript(
                                         &raw_text,
                                         processor.as_ref(),
                                         &window_ctx,
                                         &dictionary,
                                         &memory_context,
-                                        !use_chatgpt
-                                            || matches!(
-                                                recognition_engine,
-                                                config::RecognitionEngine::WhisperLocal
-                                            ),
+                                        permission,
                                     )
                                     .await;
 
@@ -893,28 +919,29 @@ pub async fn run_daemon(mut config: config::Config, cli_no_context: bool) -> Res
                                     )
                                     .await;
                                     let focused_app = wayland_focused_app(&dbus_emitter).await;
-                                    if let Err(e) = result
+                                    let paste = result
                                         .paste(
                                             active_window_id.as_deref(),
                                             focused_app.as_deref(),
                                             &config.input,
                                             !use_chatgpt,
                                         )
-                                        .await
-                                    {
+                                        .await;
+                                    if let Err(e) = &paste {
                                         tracing::error!("Failed to insert text: {}", e);
                                     }
 
                                     let problem = result.fallback.as_ref().and_then(|error| {
                                         error.downcast_ref::<ai::chatgpt::Problem>().copied()
                                     });
-                                    if problem != last_chatgpt_problem {
-                                        if let (Some(problem), Some(emitter)) =
-                                            (problem, &dbus_emitter)
+                                    let notice = problem.map(|problem| (problem, paste.is_ok()));
+                                    if notice != last_chatgpt_problem {
+                                        if let (Some((problem, pasted)), Some(emitter)) =
+                                            (notice, &dbus_emitter)
                                         {
-                                            emitter.notify_chatgpt_fallback(problem);
+                                            emitter.notify_chatgpt_fallback(problem, pasted);
                                         }
-                                        last_chatgpt_problem = problem;
+                                        last_chatgpt_problem = notice;
                                     }
                                 }
                                 Err(e) => {
@@ -1109,5 +1136,48 @@ mod tests {
         // Even with enabled=true, should not panic (fire-and-forget).
         sound::play_if_enabled("message-new-instant", true);
         sound::play_if_enabled("complete", true);
+    }
+}
+
+#[cfg(test)]
+mod chatgpt_settings_tests {
+    use super::*;
+    use ai::chatgpt::Problem;
+
+    #[test]
+    fn chatgpt_requires_current_opt_in_and_local_recognition() {
+        fn example() -> config::Config {
+            toml::from_str(include_str!("../config.toml")).unwrap()
+        }
+        let local = config::RecognitionEngine::WhisperLocal;
+        let mut opted_out = example();
+        opted_out.ai.engine = config::AiEngine::Ollama;
+        assert_eq!(
+            chatgpt_processing_permission(Ok(opted_out), &local),
+            Err(Problem::SettingsChanged)
+        );
+        assert_eq!(
+            chatgpt_processing_permission(Err(anyhow::anyhow!("test read failure")), &local),
+            Err(Problem::SettingsChanged)
+        );
+        let mut opted_in = example();
+        opted_in.ai.engine = config::AiEngine::Chatgpt;
+        opted_in.recognition.engine = config::RecognitionEngine::WhisperLocal;
+        assert_eq!(
+            chatgpt_processing_permission(Ok(opted_in.clone()), &local),
+            Ok(())
+        );
+        assert_eq!(
+            chatgpt_processing_permission(
+                Ok(opted_in.clone()),
+                &config::RecognitionEngine::OpenaiApi
+            ),
+            Err(Problem::LocalWhisperRequired)
+        );
+        opted_in.recognition.engine = config::RecognitionEngine::OpenaiApi;
+        assert_eq!(
+            chatgpt_processing_permission(Ok(opted_in), &local),
+            Err(Problem::LocalWhisperRequired)
+        );
     }
 }

@@ -127,7 +127,7 @@ impl DbusEmitter {
     }
 
     /// Desktop status feedback without blocking the next recording.
-    pub fn notify_chatgpt_fallback(&self, problem: crate::ai::chatgpt::Problem) {
+    pub fn notify_chatgpt_fallback(&self, problem: crate::ai::chatgpt::Problem, pasted: bool) {
         let connection = self.connection.clone();
         tokio::spawn(async move {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -138,7 +138,12 @@ impl DbusEmitter {
                     "org.freedesktop.Notifications",
                 )
                 .await?;
-                let body = format!("{problem}. Used dictionary-corrected text. See Settings → AI.");
+                let action = if pasted {
+                    "Used dictionary-corrected text."
+                } else {
+                    "Could not paste dictionary-corrected text."
+                };
+                let body = format!("{problem}. {action} See Settings → AI.");
                 let _: u32 = proxy
                     .call(
                         "Notify",
