@@ -53,7 +53,7 @@ anyhow = "1"
 thiserror = "2"
 
 # D-Bus
-zbus = "5"
+zbus = "6"
 
 # UUID generation
 uuid = { version = "1", features = ["v4"] }
